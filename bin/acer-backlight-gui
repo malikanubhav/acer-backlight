@@ -98,7 +98,7 @@ class ColourWheel(Gtk.DrawingArea):
             g.add_color_stop_rgb(1.0, hr, hg, hb)
             cr.set_source(g)
             cr.move_to(cx, cy)
-            cr.arc(cx, cy, r, math.radians(deg) - step * .55, math.radians(deg) + step * .55)
+            cr.arc(cx, cy, r, math.radians(deg) - step * .9, math.radians(deg) + step * .9)
             cr.close_path()
             cr.fill()
 
