@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.5.1
+VERSION=1.6.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -200,6 +200,15 @@ case "${1:-}" in
     wmbb $(( (1 << 28) | (v << 16) )) >/dev/null
     echo "hardware brightness set to $v"; exit 0 ;;
 
+  sleep-prep)
+    # Run BEFORE suspend. A controller that is powered down mid-active-state can come
+    # back latched and deaf to every ACPI write until the machine is fully power
+    # cycled. Blank it and drop the master enable first, so it goes down idle.
+    need_root; have_call || die "acpi_call not loaded"
+    for z in $ZONES_ALL; do paint "$z" 0 0 0; done
+    master off
+    echo "lighting blanked and master disabled for suspend"; exit 0 ;;
+
   restore)
     # Full re-init, used after resume. Master enable, then every selector, twice.
     # The setter cannot report failure, so the cheap insurance is to do it all.
@@ -228,7 +237,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | doctor | ready | zones-on | hwbright | restore | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | zones-on | hwbright | sleep-prep | restore | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
