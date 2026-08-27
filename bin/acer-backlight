@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.3.0
+VERSION=1.4.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -181,6 +181,14 @@ case "${1:-}" in
     master on; for z in $ZONES_ALL; do paint "$z" 255 255 255; done
     echo "master on + all zones white"; exit 0 ;;
 
+  zones-on)
+    # fn 0x67 mode 0x00 -> EC 0xC2, the zone ENABLE mask. Separate from colour:
+    # a disabled zone ignores every colour write. ARGS 0x777 sets all nine mask bits
+    # (the firmware gathers them from ARGS bits 0-2, 4-6 and 8-10).
+    need_root; have_call || die "acpi_call not loaded"
+    wmbb $((0x00000777)) >/dev/null
+    echo "zone enable mask set (all zones)"; exit 0 ;;
+
   restore)
     # Full re-init, used after resume. Master enable, then every selector, twice.
     # The setter cannot report failure, so the cheap insurance is to do it all.
@@ -192,6 +200,7 @@ case "${1:-}" in
     rr=$(( 16#${hexv:0:2} * br / 100 )); gg=$(( 16#${hexv:2:2} * br / 100 )); bb=$(( 16#${hexv:4:2} * br / 100 ))
     for pass in 1 2; do
         master on
+        wmbb $((0x00000777)) >/dev/null      # re-enable every zone before colouring
         for z in $ZONES_ALL; do paint "$z" "$rr" "$gg" "$bb"; done
         [[ $pass == 1 ]] && sleep 1
     done
@@ -207,7 +216,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | doctor | ready | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | zones-on | restore | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
