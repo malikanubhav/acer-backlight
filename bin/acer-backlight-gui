@@ -10,10 +10,19 @@ whole keyboard. So there is no zone UI; one colour, one brightness.
 Colour comes from a continuous HSV wheel: hue around the rim, saturation toward the
 centre, value from the brightness bar.
 """
-import gi, cairo, subprocess, shutil, json, os, math, colorsys
+import gi, subprocess, shutil, json, os, math, colorsys
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib
+
+# The colour wheel needs pycairo AND the PyGObject<->cairo bridge (python3-gi-cairo,
+# which provides gi._gi_cairo). Without the bridge, draw callbacks never receive a
+# usable context: the wheel comes out blank while the rest of the window works.
+try:
+    import cairo, gi._gi_cairo          # noqa: F401
+    HAVE_CAIRO = True
+except ImportError:
+    HAVE_CAIRO = False
 
 KBDLIGHT = shutil.which("acer-backlight") or "/usr/local/bin/acer-backlight"
 STATE = os.path.expanduser("~/.config/acer-backlight.json")
@@ -147,10 +156,14 @@ class Window(Adw.ApplicationWindow):
         self.preview = Gtk.Box(height_request=64)
         page.append(self.preview)
 
-        self.wheel = ColourWheel(self.on_wheel)
-        self.wheel.set_halign(Gtk.Align.CENTER)
-        self.wheel.set_vexpand(True)
-        page.append(self.wheel)
+        if HAVE_CAIRO:
+            self.wheel = ColourWheel(self.on_wheel)
+            self.wheel.set_halign(Gtk.Align.CENTER)
+            self.wheel.set_vexpand(True)
+            page.append(self.wheel)
+        else:
+            self.wheel = None
+            page.append(self._cairo_missing())
 
         self.hexlabel = Gtk.Label(label="")
         self.hexlabel.add_css_class("title-3")
@@ -176,9 +189,27 @@ class Window(Adw.ApplicationWindow):
         page.append(self.status)
 
         self._syncing = False
-        self.wheel.set_rgb(self.rgb)
+        if self.wheel:
+            self.wheel.set_rgb(self.rgb)
         self.refresh()
         self.apply()
+
+    def _cairo_missing(self):
+        """Shown instead of the wheel when the cairo bridge is absent."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, vexpand=True,
+                      valign=Gtk.Align.CENTER)
+        t = Gtk.Label(label="Colour wheel unavailable")
+        t.add_css_class("title-2")
+        d = Gtk.Label(label="The cairo bridge for PyGObject is not installed.\n"
+                            "Brightness below still works, and so does the command line.",
+                      justify=Gtk.Justification.CENTER, wrap=True)
+        d.add_css_class("dim-label")
+        cmd = Gtk.Label(label="sudo apt install python3-cairo python3-gi-cairo",
+                        selectable=True)
+        cmd.add_css_class("monospace")
+        for w in (t, d, cmd):
+            box.append(w)
+        return box
 
     # ---- state ------------------------------------------------------------
     def hex(self):

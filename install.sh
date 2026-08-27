@@ -14,12 +14,13 @@ MODC=/etc/modules-load.d/acpi_call.conf
 SUDOD=/etc/sudoers.d/acer-backlight
 DESK=/usr/share/applications/acer-backlight.desktop
 ICON=/usr/share/icons/hicolor/scalable/apps/acer-backlight.svg
+SLEEP=/usr/lib/systemd/system-sleep/acer-backlight
 
 [[ $EUID -eq 0 ]] || { echo "run with sudo"; exit 1; }
 
 if [[ ${1:-install} == uninstall ]]; then
     systemctl disable --now acer-backlight.service 2>/dev/null || true
-    rm -f "$BIN" "$GUI" "$UNIT" "$MODC" "$CONF" "$SUDOD" "$DESK" "$ICON" /etc/acer-backlight.conf
+    rm -f "$BIN" "$GUI" "$UNIT" "$MODC" "$CONF" "$SUDOD" "$DESK" "$ICON" "$SLEEP" /etc/acer-backlight.conf
     systemctl daemon-reload
     command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -qf /usr/share/icons/hicolor || true
     echo "removed."
@@ -30,6 +31,10 @@ fi
 miss=()
 python3 -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1')" 2>/dev/null \
     || miss+=("python3-gi gir1.2-gtk-4.0 gir1.2-adw-1")
+# python3-gi-cairo provides gi._gi_cairo, the PyGObject<->cairo bridge. Without it the
+# colour wheel silently fails to draw while the rest of the window works fine.
+python3 -c "import cairo, gi._gi_cairo" 2>/dev/null \
+    || miss+=("python3-cairo python3-gi-cairo")
 modinfo acpi_call >/dev/null 2>&1 || miss+=("acpi-call-dkms")
 if (( ${#miss[@]} )); then
     echo "Missing dependencies. Install them first:"
@@ -70,8 +75,22 @@ ExecStart=/bin/sh -c '/usr/local/bin/acer-backlight -b "${BRIGHT:-60}" "${COLOR:
 RemainAfterExit=no
 
 [Install]
-WantedBy=multi-user.target suspend.target hibernate.target suspend-then-hibernate.target
+WantedBy=multi-user.target
 U
+
+# Resume is handled here, not by the unit. A unit that is WantedBy both
+# multi-user.target and suspend.target does not reliably fire on wake;
+# /usr/lib/systemd/system-sleep is the documented hook and runs with "post".
+install -d /usr/lib/systemd/system-sleep
+cat > "$SLEEP" <<'S'
+#!/bin/sh
+# Restore the keyboard backlight after resume. Called with: pre|post <suspend|hibernate>
+[ "$1" = post ] || exit 0
+[ -r /etc/default/acer-backlight ] && . /etc/default/acer-backlight
+/sbin/modprobe acpi_call 2>/dev/null
+exec /usr/local/bin/acer-backlight -b "${BRIGHT:-60}" "${COLOR:-warm}"
+S
+chmod 755 "$SLEEP"
 
 cat > "$DESK" <<'D'
 [Desktop Entry]
