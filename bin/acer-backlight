@@ -1,0 +1,149 @@
+#!/bin/bash
+# acer-backlight — RGB keyboard backlight for Acer laptops with no Linux driver.
+#
+# Interface (reverse-engineered from the DSDT; no vendor driver claims this GUID):
+#   WMI GUID ABBC0F6D-8EA1-11D1-00A0-C90629100000 -> ACPI method \_SB.WMI.WMBB
+#   WMBB(0, 0x67, ARGS), ARGS = [31:28] mode  [27:24] zone  [23:0] three colour bytes
+#   mode 0x0F = set colour -> EC command 0xCA (keyboard lighting)
+#   mode 0x04 = master on/off -> EC command 0xC4 (0x0D on / 0x0E off)
+# Fan and thermal live on EC 0xB1/0xC0/0xC1/0xC6/0xCC and are NEVER touched here.
+#
+# The three colour bytes are unlabelled in firmware and their order differs by model,
+# so it is configurable and discoverable — see `acer-backlight calibrate`.
+#
+#   acer-backlight white | ff8000 | off        acer-backlight -b 40 warm
+#   acer-backlight 2 red                       acer-backlight detect
+#   acer-backlight reset                       acer-backlight calibrate
+set -u
+
+CALL=/proc/acpi/call
+M='\_SB.WMI.WMBB'
+GUID=ABBC0F6D-8EA1-11D1-00A0-C90629100000
+CONF=/etc/acer-backlight.conf
+
+# Per-model settings, discovered by `calibrate`. Defaults are the A715-79G values.
+CHANNEL_ORDER=BRG     # byte order at [23:16][15:8][7:0]
+ZONES_ALL="0 1 2 3"   # zone indices to paint. NEVER 4/5/6 — undocumented, latch the controller off.
+[[ -r $CONF ]] && . "$CONF"
+
+declare -A NAMED=(
+  [off]=000000    [black]=000000  [white]=ffffff  [red]=ff0000   [green]=00ff00
+  [blue]=0000ff   [yellow]=ffff00 [cyan]=00ffff   [magenta]=ff00ff [purple]=8000ff
+  [orange]=ff5000 [pink]=ff2080   [teal]=00ff80   [warm]=ffb060
+)
+
+die() { echo "acer-backlight: $*" >&2; exit 1; }
+need_root() { [[ $EUID -eq 0 ]] || die "needs root — try: sudo $0 $*"; }
+have_call() { [[ -e $CALL ]] || modprobe acpi_call 2>/dev/null; [[ -e $CALL ]]; }
+
+# --- raw WMBB ------------------------------------------------------------
+wmbb() {  # wmbb <32-bit ARGS>
+  local a=$1 bb
+  printf -v bb 'b%02x%02x%02x%02x' $((a&0xff)) $(((a>>8)&0xff)) $(((a>>16)&0xff)) $(((a>>24)&0xff))
+  if [[ ${DRYRUN:-} ]]; then echo "ARGS=$(printf '0x%08X' "$a") buf=$bb"; return; fi
+  echo "$M 0x0 0x67 $bb" > "$CALL" 2>/dev/null
+  tr -d '\0' < "$CALL"
+}
+master() { [[ $1 == on ]] && wmbb $((0x40010000)) >/dev/null || wmbb $((0x40000000)) >/dev/null; }
+
+# Pack r,g,b into the 24 colour bits according to CHANNEL_ORDER.
+pack() {  # pack <r> <g> <b>
+  local r=$1 g=$2 b=$3 out=0 i c v
+  for ((i=0; i<3; i++)); do
+    c=${CHANNEL_ORDER:$i:1}
+    case $c in R) v=$r;; G) v=$g;; B) v=$b;; *) die "bad CHANNEL_ORDER '$CHANNEL_ORDER'";; esac
+    out=$(( out | (v << (16 - i*8)) ))
+  done
+  echo "$out"
+}
+
+paint() {  # paint <zone> <r> <g> <b>
+  wmbb $(( 0xF0000000 | ($1 << 24) | $(pack "$2" "$3" "$4") )) >/dev/null
+}
+
+# --- subcommands ---------------------------------------------------------
+case "${1:-}" in
+  detect)
+    echo "vendor : $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)"
+    echo "model  : $(cat /sys/class/dmi/id/product_name 2>/dev/null)"
+    echo "bios   : $(cat /sys/class/dmi/id/bios_version 2>/dev/null)"
+    if [[ -e /sys/bus/wmi/devices/$GUID ]]; then
+        echo "wmi    : $GUID present — supported"
+    else
+        echo "wmi    : $GUID NOT present"
+        echo "         GUIDs this machine does expose:"
+        ls /sys/bus/wmi/devices/ 2>/dev/null | sed 's/^/           /'
+        echo "         acer-backlight cannot drive this model. Try Linuwu-Sense for"
+        echo "         Predator/Nitro (GUID 7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56)."
+    fi
+    echo "module : $([[ -e $CALL ]] && echo 'acpi_call loaded' || echo 'acpi_call NOT loaded')"
+    echo "config : $([[ -r $CONF ]] && echo "$CONF (order=$CHANNEL_ORDER zones='$ZONES_ALL')" \
+                                    || echo "none — using defaults (order=$CHANNEL_ORDER)")"
+    exit 0 ;;
+
+  calibrate)
+    need_root; have_call || die "acpi_call not loaded"
+    echo "Two questions. Watch the keyboard."; echo
+    master on
+    # Byte [23:16] alone, then byte [15:8] alone. Each is one saturated channel,
+    # so the answer is unambiguous — mixed colours would not identify which moved.
+    declare -a seen
+    for i in 0 1; do
+        wmbb $(( 0xF0000000 | (0xFF << (16 - i*8)) )) >/dev/null
+        sleep 1
+        read -rp "  Colour $((i+1)) of 2 — is the keyboard Red, Green or Blue? [r/g/b] " a
+        case ${a,,} in r*) seen[i]=R;; g*) seen[i]=G;; b*) seen[i]=B;; *) die "answer r, g or b";; esac
+    done
+    [[ ${seen[0]} == "${seen[1]}" ]] && die "both answers were the same — rerun and look carefully"
+    third=$(tr -d "${seen[0]}${seen[1]}" <<< "RGB")
+    order="${seen[0]}${seen[1]}${third}"
+
+    # zone count: paint zone 0 red and zone 1 blue; if both show, zones are real
+    paint 0 255 0 0; paint 1 0 0 255; sleep 1
+    read -rp "  Do you see TWO colours across the keyboard, or one? [two/one] " z
+    [[ ${z,,} == two* ]] && zones="0 1 2 3" || zones="0"
+
+    printf 'CHANNEL_ORDER=%s\nZONES_ALL="%s"\n' "$order" "$zones" > "$CONF"
+    echo; echo "saved $CONF  (order=$order, zones='$zones')"
+    CHANNEL_ORDER=$order ZONES_ALL=$zones
+    for z in $zones; do paint "$z" 255 176 96; done
+    echo "calibrated — try: sudo $0 purple"
+    exit 0 ;;
+
+  on|enable) need_root; have_call || die "acpi_call not loaded"; master on; echo "master enable sent"; exit 0 ;;
+
+  reset)
+    need_root; have_call || die "acpi_call not loaded"
+    master on; for z in $ZONES_ALL; do paint "$z" 255 255 255; done
+    echo "master on + all zones white"; exit 0 ;;
+esac
+
+# --- colour ---------------------------------------------------------------
+BRIGHT=100
+[[ ${1:-} == -b ]] && { BRIGHT=${2:?-b needs 0-100}; shift 2; }
+[[ $BRIGHT =~ ^[0-9]+$ ]] && (( BRIGHT <= 100 )) || die "-b must be 0-100"
+
+ZONES=$ZONES_ALL
+if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
+
+spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
+       or: acer-backlight detect | calibrate | on | reset"
+hex=${NAMED[${spec,,}]:-$spec}
+[[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
+
+r=$(( 16#${hex:0:2} * BRIGHT / 100 ))
+g=$(( 16#${hex:2:2} * BRIGHT / 100 ))
+b=$(( 16#${hex:4:2} * BRIGHT / 100 ))
+
+if [[ ${DRYRUN:-} ]]; then
+    for z in $ZONES; do
+        echo -n "zone $z rgb($r,$g,$b) order=$CHANNEL_ORDER "
+        wmbb $(( 0xF0000000 | (z << 24) | $(pack "$r" "$g" "$b") ))
+    done
+    exit 0
+fi
+
+need_root
+have_call || die "acpi_call not loaded"
+[[ $hex == 000000 ]] || master on
+for z in $ZONES; do paint "$z" "$r" "$g" "$b"; done

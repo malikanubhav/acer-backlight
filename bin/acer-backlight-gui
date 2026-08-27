@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""acer-backlight-gui — GNOME front end for the Acer A715-79G RGB keyboard backlight.
+
+Drives /usr/local/bin/acer-backlight, which writes ACPI \\_SB.WMI.WMBB fn 0x67 mode 0x0F
+via acpi_call. Needs passwordless sudo for that one binary (acer-backlight-install.sh sets it up).
+
+This machine is SINGLE ZONE — verified on hardware: writing any zone index changes the
+whole keyboard. So there is no zone UI; one colour, one brightness.
+
+Colour comes from a continuous HSV wheel: hue around the rim, saturation toward the
+centre, value from the brightness bar.
+"""
+import gi, cairo, subprocess, shutil, json, os, math, colorsys
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Gtk, Adw, GLib
+
+KBDLIGHT = shutil.which("acer-backlight") or "/usr/local/bin/acer-backlight"
+STATE = os.path.expanduser("~/.config/acer-backlight.json")
+DEFAULT = [255, 176, 96]
+
+
+def run(args):
+    """Call acer-backlight. Returns None on success, else error text."""
+    try:
+        p = subprocess.run(["sudo", "-n", KBDLIGHT] + args,
+                           capture_output=True, text=True, timeout=5)
+        return None if p.returncode == 0 else (p.stderr.strip() or f"exit {p.returncode}")
+    except subprocess.TimeoutExpired:
+        return "timed out — sudo wants a password (run acer-backlight-install.sh)"
+    except FileNotFoundError:
+        return f"{KBDLIGHT} not found"
+
+
+def css(widget, rules):
+    p = Gtk.CssProvider()
+    p.load_from_data(rules.encode())
+    widget.get_style_context().add_provider(p, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+
+class ColourWheel(Gtk.DrawingArea):
+    """HSV wheel. Angle = hue, radius = saturation. Click or drag to pick.
+
+    Drawn as 360 one-degree wedges, each a radial gradient from white at the centre
+    to the fully saturated hue at the rim — a few milliseconds, versus most of a
+    second for a per-pixel HSV loop in Python.
+    """
+
+    def __init__(self, on_pick):
+        super().__init__()
+        self.on_pick = on_pick
+        self.hue, self.sat = 0.08, 0.62
+        self.set_content_width(320)
+        self.set_content_height(320)
+        self.set_draw_func(self._draw)
+
+        click = Gtk.GestureClick()
+        click.connect("pressed", lambda g, n, x, y: self._pick(x, y))
+        self.add_controller(click)
+        drag = Gtk.GestureDrag()
+        drag.connect("drag-begin", lambda g, x, y: self._pick(x, y))
+        drag.connect("drag-update", self._on_drag)
+        self.add_controller(drag)
+
+    def _geom(self):
+        w, h = self.get_width(), self.get_height()
+        return w / 2, h / 2, min(w, h) / 2 - 8
+
+    def _on_drag(self, gesture, dx, dy):
+        ok, sx, sy = gesture.get_start_point()
+        if ok:
+            self._pick(sx + dx, sy + dy)
+
+    def _pick(self, x, y):
+        cx, cy, r = self._geom()
+        dx, dy = x - cx, y - cy
+        self.hue = (math.atan2(dy, dx) / (2 * math.pi)) % 1.0
+        self.sat = min(math.hypot(dx, dy) / r, 1.0)
+        self.queue_draw()
+        self.on_pick(self.rgb())
+
+    def rgb(self):
+        r, g, b = colorsys.hsv_to_rgb(self.hue, self.sat, 1.0)
+        return [int(round(r * 255)), int(round(g * 255)), int(round(b * 255))]
+
+    def set_rgb(self, rgb):
+        h, s, _ = colorsys.rgb_to_hsv(*[c / 255 for c in rgb])
+        self.hue, self.sat = h, s
+        self.queue_draw()
+
+    def _draw(self, _area, cr, _w, _h):
+        cx, cy, r = self._geom()
+        step = math.radians(1)
+        for deg in range(360):
+            hr, hg, hb = colorsys.hsv_to_rgb(deg / 360.0, 1.0, 1.0)
+            g = cairo.RadialGradient(cx, cy, 0, cx, cy, r)
+            g.add_color_stop_rgb(0.0, 1, 1, 1)
+            g.add_color_stop_rgb(1.0, hr, hg, hb)
+            cr.set_source(g)
+            cr.move_to(cx, cy)
+            cr.arc(cx, cy, r, math.radians(deg) - step * .55, math.radians(deg) + step * .55)
+            cr.close_path()
+            cr.fill()
+
+        cr.set_source_rgba(0, 0, 0, .28)
+        cr.set_line_width(1.5)
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.stroke()
+
+        mx = cx + math.cos(self.hue * 2 * math.pi) * self.sat * r
+        my = cy + math.sin(self.hue * 2 * math.pi) * self.sat * r
+        rr, gg, bb = colorsys.hsv_to_rgb(self.hue, self.sat, 1.0)
+        cr.set_source_rgb(rr, gg, bb)
+        cr.arc(mx, my, 11, 0, 2 * math.pi)
+        cr.fill_preserve()
+        cr.set_source_rgb(1, 1, 1)
+        cr.set_line_width(3)
+        cr.stroke()
+        cr.set_source_rgba(0, 0, 0, .45)
+        cr.set_line_width(1)
+        cr.arc(mx, my, 12.5, 0, 2 * math.pi)
+        cr.stroke()
+
+
+class Window(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Acer Backlight",
+                         default_width=430, default_height=680)
+        self.rgb = list(DEFAULT)
+        self.bright = 60
+        self._timer = None
+        self._syncing = True
+        self._load()
+
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        header = Adw.HeaderBar()
+        offb = Gtk.Button(icon_name="system-shutdown-symbolic", tooltip_text="Lights off")
+        offb.connect("clicked", self.on_off)
+        header.pack_end(offb)
+        root.append(header)
+
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, vexpand=True,
+                       margin_top=14, margin_bottom=18, margin_start=18, margin_end=18)
+        root.append(page)
+        self.set_content(root)
+
+        self.preview = Gtk.Box(height_request=64)
+        page.append(self.preview)
+
+        self.wheel = ColourWheel(self.on_wheel)
+        self.wheel.set_halign(Gtk.Align.CENTER)
+        self.wheel.set_vexpand(True)
+        page.append(self.wheel)
+
+        self.hexlabel = Gtk.Label(label="")
+        self.hexlabel.add_css_class("title-3")
+        page.append(self.hexlabel)
+
+        g = Adw.PreferencesGroup(title="Brightness")
+        brow = Adw.ActionRow()
+        self.bscale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.bscale.set_value(self.bright)
+        self.bscale.set_draw_value(True)
+        self.bscale.set_value_pos(Gtk.PositionType.RIGHT)
+        self.bscale.set_hexpand(True)
+        self.bscale.set_size_request(280, -1)
+        for m in (0, 25, 50, 75, 100):
+            self.bscale.add_mark(m, Gtk.PositionType.BOTTOM, None)
+        self.bscale.connect("value-changed", self.on_bright)
+        brow.add_suffix(self.bscale)
+        g.add(brow)
+        page.append(g)
+
+        self.status = Gtk.Label(label="")
+        self.status.add_css_class("dim-label")
+        page.append(self.status)
+
+        self._syncing = False
+        self.wheel.set_rgb(self.rgb)
+        self.refresh()
+        self.apply()
+
+    # ---- state ------------------------------------------------------------
+    def hex(self):
+        return "%02x%02x%02x" % tuple(self.rgb)
+
+    def _load(self):
+        try:
+            d = json.load(open(STATE))
+            rgb = d.get("rgb") or (d.get("zcolors") or [DEFAULT])[0]   # migrate old file
+            self.rgb = [max(0, min(255, int(v))) for v in rgb[:3]]
+            self.bright = max(0, min(100, int(d.get("bright", 60))))
+        except Exception:
+            pass
+
+    def _save(self):
+        try:
+            os.makedirs(os.path.dirname(STATE), exist_ok=True)
+            json.dump({"rgb": self.rgb, "bright": self.bright}, open(STATE, "w"))
+        except Exception:
+            pass
+
+    # ---- ui ---------------------------------------------------------------
+    def refresh(self):
+        r, g, b = (c * self.bright // 100 for c in self.rgb)
+        css(self.preview,
+            "box { background: linear-gradient(135deg, rgb(%d,%d,%d), rgb(%d,%d,%d)); "
+            "border-radius:14px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }"
+            % (r, g, b, max(r - 45, 0), max(g - 45, 0), max(b - 45, 0)))
+        self.hexlabel.set_label(
+            f"#{self.hex().upper()}   ·   rgb({self.rgb[0]}, {self.rgb[1]}, {self.rgb[2]})")
+
+    # ---- handlers ---------------------------------------------------------
+    def on_wheel(self, rgb):
+        if self._syncing:
+            return
+        self.rgb = list(rgb)
+        self.refresh()
+        self.schedule()
+
+    def on_bright(self, sc):
+        self.bright = int(sc.get_value())
+        self.refresh()
+        self.schedule()
+
+    def on_off(self, *_):
+        self.rgb = [0, 0, 0]
+        self.wheel.set_rgb([255, 255, 255])
+        self.refresh()
+        self.apply()
+
+    # ---- apply, debounced --------------------------------------------------
+    def schedule(self):
+        """Dragging fires continuously. Coalesce to one firmware call per 100 ms so
+        we don't spawn dozens of sudo processes and thrash the EC mutex."""
+        if self._syncing:
+            return
+        if self._timer:
+            GLib.source_remove(self._timer)
+        self._timer = GLib.timeout_add(100, self._fire)
+
+    def _fire(self):
+        self._timer = None
+        self.apply()
+        return GLib.SOURCE_REMOVE
+
+    def apply(self):
+        # One subprocess: acer-backlight paints every zone index itself.
+        err = run(["-b", str(self.bright), self.hex()])
+        if err:
+            self.status.set_label(f"⚠  {err}")
+            self.status.remove_css_class("dim-label")
+        else:
+            self.status.set_label(f"{self.bright}% brightness")
+            self.status.add_css_class("dim-label")
+            self._save()
+
+
+class App(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="dev.local.acer-backlight")
+
+    def do_activate(self):
+        (self.props.active_window or Window(self)).present()
+
+
+if __name__ == "__main__":
+    App().run(None)
