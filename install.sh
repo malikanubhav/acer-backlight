@@ -117,24 +117,26 @@ cat > "$SLEEP" <<'S'
 [ "$1" = post ] || exit 0
 [ -r /etc/default/acer-backlight ] && . /etc/default/acer-backlight
 B=${BRIGHT:-60}; C=${COLOR:-warm}
+BIN=/usr/local/bin/acer-backlight
 
-# Writing to /proc/acpi/call succeeds whether or not the EC is ready to act on it,
-# so there is nothing to test for. Apply several times over ~8s instead: the early
-# attempts cover a controller that is already awake, the later ones cover one that
-# is not. Re-applying an identical colour is a no-op, so extra passes cost nothing.
-n=0; done=0
-for delay in 0 1 2 5 8; do
-    [ "$delay" = 0 ] || sleep "$delay"
+# A colour write returns success even when the EC is asleep: the whole body of the
+# ACPI setter sits inside If(ECOK) and the method reports 0x67 regardless. Getters
+# are honest — they return Ones when ECOK is false. So wait for a getter to answer
+# before writing, instead of writing blind on a timer.
+n=0
+while [ "$n" -lt 30 ]; do
     modprobe acpi_call 2>/dev/null
-    [ -e /proc/acpi/call ] || continue
-    /usr/local/bin/acer-backlight -b "$B" "$C" 2>/dev/null && { n=$((n+1)); done=1; }
+    if [ -e /proc/acpi/call ] && "$BIN" ready >/dev/null 2>&1; then
+        "$BIN" -b "$B" "$C" 2>/dev/null
+        sleep 1
+        "$BIN" -b "$B" "$C" 2>/dev/null      # second pass: EC can accept the first and still not latch
+        logger -t acer-backlight "resume: EC ready after ${n}s, applied $C at $B%"
+        exit 0
+    fi
+    n=$((n + 1))
+    sleep 1
 done
-
-if [ "$done" = 1 ]; then
-    logger -t acer-backlight "resume: applied $C at $B% ($n passes)"
-else
-    logger -t acer-backlight "resume: FAILED - /proc/acpi/call never appeared"
-fi
+logger -t acer-backlight "resume: EC never became ready within 30s - backlight not restored"
 exit 0
 S
 chmod 755 "$SLEEP"

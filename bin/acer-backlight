@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.2.2
+VERSION=1.2.3
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -86,6 +86,18 @@ case "${1:-}" in
     # exec swaps the process image so nothing is still reading the old script.
     keep=$(mktemp -d); cp -r "$tmp/r/." "$keep/"; trap - EXIT; rm -rf "$tmp"
     exec bash "$keep/install.sh" ;;
+
+  ready)
+    # Is the EC actually accepting commands? Every GCMD branch is gated on ECOK and
+    # returns Ones when it is false, so a getter that comes back 0xffffffff means the
+    # controller is not ready — even though a setter would still report success.
+    need_root; have_call || die "acpi_call not loaded"
+    echo "$M 0x0 0x63 b00" > "$CALL" 2>/dev/null
+    r=$(tr -d '\0' < "$CALL")
+    if [[ $r == 0xffffffff || -z $r || $r == "not called" ]]; then
+        echo "EC not ready (getter returned ${r:-nothing})"; exit 1
+    fi
+    echo "EC ready (getter returned $r)"; exit 0 ;;
 
   doctor)
     # One command that produces everything needed to diagnose a report.
@@ -180,7 +192,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | doctor | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
