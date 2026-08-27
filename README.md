@@ -1,6 +1,12 @@
-# Acer Backlight
+<p align="center">
+  <img src="share/acer-backlight.svg" width="128" height="128" alt="Acer Backlight">
+</p>
 
-RGB keyboard backlight control for Acer laptops that Linux has no driver for.
+<h1 align="center">Acer Backlight</h1>
+
+<p align="center">
+  RGB keyboard backlight control for Acer laptops that Linux has no driver for.
+</p>
 
 Some Acer laptops expose their keyboard lighting through WMI GUID
 `ABBC0F6D-8EA1-11D1-00A0-C90629100000`. Mainline `acer-wmi` binds a different set of
@@ -37,7 +43,7 @@ Ubuntu 24.04, Secure Boot on). Reports from other models welcome.
 
 ```bash
 sudo apt install acpi-call-dkms python3-gi gir1.2-gtk-4.0 gir1.2-adw-1
-git clone https://github.com/YOURNAME/acer-backlight.git
+git clone https://github.com/malikanubhav/acer-backlight.git
 cd acer-backlight
 sudo ./install.sh
 ```
