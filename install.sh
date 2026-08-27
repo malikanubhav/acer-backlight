@@ -69,8 +69,17 @@ W
 fi
 
 # --- files ----------------------------------------------------------------
-install -m 755 "$SRC/bin/acer-backlight"      "$BIN"
-install -m 755 "$SRC/bin/acer-backlight-gui"  "$GUI"
+# Replace by atomic rename, never by overwriting in place. `install` truncates the
+# destination, which corrupts any process currently executing that file — including
+# `acer-backlight update`, which runs this script from the very binary being replaced.
+# A rename leaves the old inode intact for readers that already have it open.
+put() {  # put <src> <dst> <mode>
+    local dir tmp; dir=$(dirname "$2")
+    tmp=$(mktemp "$dir/.acer-backlight.XXXXXX") || { echo "cannot write to $dir"; exit 1; }
+    cat "$1" > "$tmp" && chmod "$3" "$tmp" && mv -f "$tmp" "$2" || { rm -f "$tmp"; exit 1; }
+}
+put "$SRC/bin/acer-backlight"      "$BIN" 755
+put "$SRC/bin/acer-backlight-gui"  "$GUI" 755
 install -D -m 644 "$SRC/share/acer-backlight.svg" "$ICON"
 echo "acpi_call" > "$MODC"
 

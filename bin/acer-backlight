@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.2.0
+VERSION=1.2.1
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -82,8 +82,10 @@ case "${1:-}" in
     else
         echo "latest:  ${new:-unknown}"
     fi
-    bash "$tmp/r/install.sh"
-    exit 0 ;;
+    # exec, not call: this process is running from the file install.sh replaces.
+    # exec swaps the process image so nothing is still reading the old script.
+    keep=$(mktemp -d); cp -r "$tmp/r/." "$keep/"; trap - EXIT; rm -rf "$tmp"
+    exec bash "$keep/install.sh" ;;
 
   doctor)
     # One command that produces everything needed to diagnose a report.
