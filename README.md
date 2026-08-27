@@ -36,8 +36,8 @@ acer-backlight detect
 
 `detect` refuses to write anything if the GUID is absent.
 
-Developed and verified on an **Aspire A715-79G** (BIOS 1.07.01TACI, kernel 6.17,
-Ubuntu 24.04, Secure Boot on). Reports from other models welcome.
+Confirmed working on **two Aspire A715-79G units** (BIOS 1.07.01TACI, Ubuntu 24.04 —
+one with Secure Boot on, one off). Both are single-zone. Reports from other models welcome.
 
 ## Install
 

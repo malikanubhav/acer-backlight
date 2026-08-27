@@ -113,24 +113,28 @@ install -d "$SLEEPDIR"
 cat > "$SLEEP" <<'S'
 #!/bin/sh
 # Restore the keyboard backlight after resume. Called with: pre|post <suspend|hibernate>
-# Logs to the journal either way:  journalctl -t acer-backlight
+# Log:  journalctl -t acer-backlight
 [ "$1" = post ] || exit 0
 [ -r /etc/default/acer-backlight ] && . /etc/default/acer-backlight
+B=${BRIGHT:-60}; C=${COLOR:-warm}
 
-# The EC is not always ready the instant the kernel resumes, and acpi_call may
-# not be back yet. Retry for a few seconds rather than failing silently.
-n=0
-while [ "$n" -lt 6 ]; do
+# Writing to /proc/acpi/call succeeds whether or not the EC is ready to act on it,
+# so there is nothing to test for. Apply several times over ~8s instead: the early
+# attempts cover a controller that is already awake, the later ones cover one that
+# is not. Re-applying an identical colour is a no-op, so extra passes cost nothing.
+n=0; done=0
+for delay in 0 1 2 5 8; do
+    [ "$delay" = 0 ] || sleep "$delay"
     modprobe acpi_call 2>/dev/null
-    if [ -e /proc/acpi/call ] \
-       && /usr/local/bin/acer-backlight -b "${BRIGHT:-60}" "${COLOR:-warm}" 2>/dev/null; then
-        logger -t acer-backlight "resume: restored ${COLOR:-warm} at ${BRIGHT:-60}% (attempt $((n+1)))"
-        exit 0
-    fi
-    n=$((n + 1))
-    sleep 1
+    [ -e /proc/acpi/call ] || continue
+    /usr/local/bin/acer-backlight -b "$B" "$C" 2>/dev/null && { n=$((n+1)); done=1; }
 done
-logger -t acer-backlight "resume: FAILED - /proc/acpi/call missing or write rejected"
+
+if [ "$done" = 1 ]; then
+    logger -t acer-backlight "resume: applied $C at $B% ($n passes)"
+else
+    logger -t acer-backlight "resume: FAILED - /proc/acpi/call never appeared"
+fi
 exit 0
 S
 chmod 755 "$SLEEP"
