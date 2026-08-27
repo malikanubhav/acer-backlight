@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.5.0
+VERSION=1.5.1
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -108,6 +108,8 @@ case "${1:-}" in
     echo "== version ==";   echo "  $VERSION"
     echo "== machine ==";   for f in sys_vendor product_name bios_version; do
                               echo "  $f: $(cat /sys/class/dmi/id/$f 2>/dev/null)"; done
+                            echo "  kernel: $(uname -r)"
+                            echo "  sleep:  $(cat /sys/power/mem_sleep 2>/dev/null)"
     echo "== wmi ==";       [[ -e /sys/bus/wmi/devices/$GUID ]] \
                               && echo "  $GUID present" \
                               || { echo "  $GUID ABSENT. Exposed instead:";
