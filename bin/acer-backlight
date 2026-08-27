@@ -16,6 +16,8 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
+VERSION=1.1.0
+REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
 GUID=ABBC0F6D-8EA1-11D1-00A0-C90629100000
@@ -63,7 +65,28 @@ paint() {  # paint <zone> <r> <g> <b>
 
 # --- subcommands ---------------------------------------------------------
 case "${1:-}" in
+  version|--version|-V) echo "acer-backlight $VERSION"; exit 0 ;;
+
+  update)
+    # Clone fresh rather than tracking where the user's checkout lives — works
+    # even if they deleted it, and never fights local modifications.
+    need_root
+    command -v git >/dev/null || die "git is required for update"
+    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+    echo "current: $VERSION"
+    git clone --quiet --depth 1 "$REPO" "$tmp/r" || die "could not reach $REPO"
+    new=$(bash "$tmp/r/bin/acer-backlight" version 2>/dev/null | awk '{print $2}')
+    if [[ -n $new && $new == "$VERSION" ]]; then
+        echo "latest:  $new — already up to date"
+        read -rp "Reinstall anyway? [y/N] " a; [[ ${a,,} == y* ]] || exit 0
+    else
+        echo "latest:  ${new:-unknown}"
+    fi
+    bash "$tmp/r/install.sh"
+    exit 0 ;;
+
   detect)
+    echo "version: $VERSION"
     echo "vendor : $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)"
     echo "model  : $(cat /sys/class/dmi/id/product_name 2>/dev/null)"
     echo "bios   : $(cat /sys/class/dmi/id/bios_version 2>/dev/null)"
@@ -127,7 +150,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | calibrate | on | reset"
+       or: acer-backlight detect | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 

@@ -61,6 +61,16 @@ signing key — a one-time step, and it keeps Secure Boot enabled.
 
 Check your state with `mokutil --sb-state`.
 
+## Update
+
+```
+sudo acer-backlight update
+```
+
+Fetches the latest release and reinstalls. It clones fresh into a temporary directory,
+so it works even if you deleted your original checkout. `acer-backlight version` shows
+what you have.
+
 ## Calibrate
 
 The three colour bytes are unlabelled in firmware and their order differs between
@@ -81,6 +91,8 @@ acer-backlight -b 0-100 <colour>         brightness
 acer-backlight 2 red                     one zone (0-3), on multi-zone models
 acer-backlight detect                    identify this machine
 acer-backlight calibrate                 discover channel order + zone count
+acer-backlight update                    fetch the latest version and reinstall
+acer-backlight version                   show the installed version
 acer-backlight reset                     recovery, if the controller stops responding
 ```
 
