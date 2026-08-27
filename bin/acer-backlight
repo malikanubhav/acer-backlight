@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.6.0
+VERSION=1.7.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -102,6 +102,45 @@ case "${1:-}" in
         echo "EC not ready (getter returned ${r:-nothing})"; exit 1
     fi
     echo "EC ready (getter returned $r)"; exit 0 ;;
+
+  ecdump)
+    # READ-ONLY snapshot of all 256 EC registers. ec_sys is loaded without
+    # write_support, so this cannot alter anything.
+    need_root
+    modprobe ec_sys 2>/dev/null
+    io=/sys/kernel/debug/ec/ec0/io
+    [[ -r $io ]] || die "$io unreadable — ec_sys did not load"
+    h=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+    out=$h/ec-${2:?usage: ecdump <label>}.txt
+    od -A x -t x1 -v "$io" > "$out"
+    echo "captured $out"; exit 0 ;;
+
+  ecdiff)
+    h=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+    python3 - "$h/ec-${2:?usage: ecdiff <a> <b>}.txt" "$h/ec-${3:?usage: ecdiff <a> <b>}.txt" <<'PYEOF'
+import sys
+def load(p):
+    d = {}
+    for line in open(p):
+        f = line.split()
+        if len(f) < 2: continue
+        try: off = int(f[0], 16)
+        except ValueError: continue
+        for i, b in enumerate(f[1:]): d[off + i] = b
+    return d
+A, B = load(sys.argv[1]), load(sys.argv[2])
+# 0x07/0x32/0x66/0x67/0xd1/0xd3 drift on their own (temps, fan counters);
+# 0xf8-0xfd are the ACPI mailbox (FCMD/FDAT/FBUF/FBF1/FBF2/FBF3), not state.
+noisy = {0x07,0x32,0x66,0x67,0xd1,0xd3,0xf8,0xf9,0xfa,0xfb,0xfc,0xfd}
+real = [o for o in sorted(A) if o in B and A[o] != B[o] and o not in noisy]
+skip = [o for o in sorted(A) if o in B and A[o] != B[o] and o in noisy]
+print(f"  {len(real)} meaningful byte(s) changed, {len(skip)} known-noisy ignored\n")
+for o in real:
+    print(f"    EC[0x{o:02x}]   {A[o]} -> {B[o]}")
+if not real:
+    print("    nothing outside the known-noisy set changed.")
+PYEOF
+    exit 0 ;;
 
   doctor)
     # One command that produces everything needed to diagnose a report.
@@ -237,7 +276,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | doctor | ready | zones-on | hwbright | sleep-prep | restore | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | ecdump | ecdiff | zones-on | hwbright | sleep-prep | restore | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
