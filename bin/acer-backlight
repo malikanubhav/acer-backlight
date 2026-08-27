@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.2.3
+VERSION=1.3.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -25,8 +25,12 @@ CONF=/etc/acer-backlight.conf
 
 # Per-model settings, discovered by `calibrate`. Defaults are the A715-79G values.
 CHANNEL_ORDER=BRG     # byte order at [23:16][15:8][7:0]
-ZONES_ALL="0 1 2 3"   # zone indices to paint. NEVER 4/5/6 — undocumented, latch the controller off.
 [[ -r $CONF ]] && . "$CONF"
+# Always paint all four documented selectors, whatever the config says. Extra writes
+# are no-ops on single-zone hardware, and a machine that recorded zones='0' during
+# calibration was left with a backlight that would not come back after resume.
+# NEVER 4/5/6 — undocumented, they latch the controller off.
+ZONES_ALL="0 1 2 3"
 
 declare -A NAMED=(
   [off]=000000    [black]=000000  [white]=ffffff  [red]=ff0000   [green]=00ff00
@@ -163,15 +167,10 @@ case "${1:-}" in
     third=$(tr -d "${seen[0]}${seen[1]}" <<< "RGB")
     order="${seen[0]}${seen[1]}${third}"
 
-    # zone count: paint zone 0 red and zone 1 blue; if both show, zones are real
-    paint 0 255 0 0; paint 1 0 0 255; sleep 1
-    read -rp "  Do you see TWO colours across the keyboard, or one? [two/one] " z
-    [[ ${z,,} == two* ]] && zones="0 1 2 3" || zones="0"
-
-    printf 'CHANNEL_ORDER=%s\nZONES_ALL="%s"\n' "$order" "$zones" > "$CONF"
-    echo; echo "saved $CONF  (order=$order, zones='$zones')"
-    CHANNEL_ORDER=$order ZONES_ALL=$zones
-    for z in $zones; do paint "$z" 255 176 96; done
+    printf 'CHANNEL_ORDER=%s\n' "$order" > "$CONF"
+    echo; echo "saved $CONF  (order=$order)"
+    CHANNEL_ORDER=$order
+    for z in $ZONES_ALL; do paint "$z" 255 176 96; done
     echo "calibrated — try: sudo $0 purple"
     exit 0 ;;
 
@@ -181,6 +180,22 @@ case "${1:-}" in
     need_root; have_call || die "acpi_call not loaded"
     master on; for z in $ZONES_ALL; do paint "$z" 255 255 255; done
     echo "master on + all zones white"; exit 0 ;;
+
+  restore)
+    # Full re-init, used after resume. Master enable, then every selector, twice.
+    # The setter cannot report failure, so the cheap insurance is to do it all.
+    need_root; have_call || die "acpi_call not loaded"
+    [[ -r /etc/default/acer-backlight ]] && . /etc/default/acer-backlight
+    col=${COLOR:-warm}; br=${BRIGHT:-60}
+    hexv=${NAMED[${col,,}]:-$col}
+    [[ $hexv =~ ^[0-9a-fA-F]{6}$ ]] || hexv=ffb060
+    rr=$(( 16#${hexv:0:2} * br / 100 )); gg=$(( 16#${hexv:2:2} * br / 100 )); bb=$(( 16#${hexv:4:2} * br / 100 ))
+    for pass in 1 2; do
+        master on
+        for z in $ZONES_ALL; do paint "$z" "$rr" "$gg" "$bb"; done
+        [[ $pass == 1 ]] && sleep 1
+    done
+    echo "restored $col at $br% across zones $ZONES_ALL"; exit 0 ;;
 esac
 
 # --- colour ---------------------------------------------------------------

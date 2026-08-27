@@ -80,8 +80,8 @@ models. On a machine other than the A715-79G, run:
 sudo acer-backlight calibrate
 ```
 
-It lights one channel at a time and asks what you see. Two questions, plus one about
-zone count. The answers are written to `/etc/acer-backlight.conf`.
+It lights one channel at a time and asks what you see — two questions. The answer is
+written to `/etc/acer-backlight.conf`.
 
 ## Usage
 
@@ -94,6 +94,8 @@ acer-backlight doctor                    full diagnostic — paste this in bug r
 acer-backlight calibrate                 discover channel order + zone count
 acer-backlight update                    fetch the latest version and reinstall
 acer-backlight version                   show the installed version
+acer-backlight restore                   re-apply the saved colour (full re-init)
+acer-backlight ready                     is the EC accepting commands right now?
 acer-backlight reset                     recovery, if the controller stops responding
 ```
 

@@ -115,28 +115,23 @@ cat > "$SLEEP" <<'S'
 # Restore the keyboard backlight after resume. Called with: pre|post <suspend|hibernate>
 # Log:  journalctl -t acer-backlight
 [ "$1" = post ] || exit 0
-[ -r /etc/default/acer-backlight ] && . /etc/default/acer-backlight
-B=${BRIGHT:-60}; C=${COLOR:-warm}
 BIN=/usr/local/bin/acer-backlight
 
-# A colour write returns success even when the EC is asleep: the whole body of the
-# ACPI setter sits inside If(ECOK) and the method reports 0x67 regardless. Getters
-# are honest — they return Ones when ECOK is false. So wait for a getter to answer
-# before writing, instead of writing blind on a timer.
+# Wait for the EC to answer a getter. A colour write cannot report failure — the
+# setter's body is inside If(ECOK) and returns 0x67 either way — so gate on a read.
 n=0
 while [ "$n" -lt 30 ]; do
     modprobe acpi_call 2>/dev/null
-    if [ -e /proc/acpi/call ] && "$BIN" ready >/dev/null 2>&1; then
-        "$BIN" -b "$B" "$C" 2>/dev/null
-        sleep 1
-        "$BIN" -b "$B" "$C" 2>/dev/null      # second pass: EC can accept the first and still not latch
-        logger -t acer-backlight "resume: EC ready after ${n}s, applied $C at $B%"
-        exit 0
-    fi
-    n=$((n + 1))
-    sleep 1
+    [ -e /proc/acpi/call ] && "$BIN" ready >/dev/null 2>&1 && break
+    n=$((n + 1)); sleep 1
 done
-logger -t acer-backlight "resume: EC never became ready within 30s - backlight not restored"
+
+# `restore` is the full re-init: master enable then every selector, twice.
+# Run it again a few seconds later in case something re-clears it on the way up.
+out=$("$BIN" restore 2>&1); rc=$?
+sleep 4
+"$BIN" restore >/dev/null 2>&1
+logger -t acer-backlight "resume: EC ready after ${n}s; restore rc=$rc ($out)"
 exit 0
 S
 chmod 755 "$SLEEP"
