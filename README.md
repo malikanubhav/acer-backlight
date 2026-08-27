@@ -85,25 +85,6 @@ Colours: `white red green blue yellow cyan magenta purple orange pink teal warm 
 Your colour is restored at boot and after resume by a systemd unit. Change the default
 in `/etc/default/acer-backlight`.
 
-## How it works
-
-```
-Acer Backlight (GTK4)
-   ↓ runs
-acer-backlight ff8000               packs colour into one 32-bit argument
-   ↓ writes
-/proc/acpi/call               the acpi_call module's doorway
-   ↓ calls
-\_SB.WMI.WMBB(0, 0x67, ARGS)  firmware method from the DSDT
-   ↓ fills the EC mailbox
-EC command 0xCA               the embedded controller
-   ↓
-keys change colour
-```
-
-Full protocol, including the EC commands that must **never** be written, is in
-[docs/PROTOCOL.md](docs/PROTOCOL.md).
-
 ## Safety
 
 - Only ACPI function `0x67` (keyboard lighting) is ever written.
