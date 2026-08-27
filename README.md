@@ -90,6 +90,7 @@ acer-backlight white | ff8000 | off      colour by name or hex
 acer-backlight -b 0-100 <colour>         brightness
 acer-backlight 2 red                     one zone (0-3), on multi-zone models
 acer-backlight detect                    identify this machine
+acer-backlight doctor                    full diagnostic — paste this in bug reports
 acer-backlight calibrate                 discover channel order + zone count
 acer-backlight update                    fetch the latest version and reinstall
 acer-backlight version                   show the installed version
@@ -129,6 +130,10 @@ Skip it with `sudo SKIP_SUDOERS=1 ./install.sh` — the GUI will then prompt for
 password on every change.
 
 ## Contributing
+
+Bug reports: please include the output of `sudo acer-backlight doctor`. It reports the
+version, model, WMI GUID, module and Secure Boot state, config, resume hook and the
+resume log in one block.
 
 Most valuable contribution: run `acer-backlight detect` and `acer-backlight calibrate` on another
 Acer model and open an issue with the output. Channel order and zone count vary, and

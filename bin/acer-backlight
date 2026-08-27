@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.1.0
+VERSION=1.2.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -85,6 +85,34 @@ case "${1:-}" in
     bash "$tmp/r/install.sh"
     exit 0 ;;
 
+  doctor)
+    # One command that produces everything needed to diagnose a report.
+    echo "== version ==";   echo "  $VERSION"
+    echo "== machine ==";   for f in sys_vendor product_name bios_version; do
+                              echo "  $f: $(cat /sys/class/dmi/id/$f 2>/dev/null)"; done
+    echo "== wmi ==";       [[ -e /sys/bus/wmi/devices/$GUID ]] \
+                              && echo "  $GUID present" \
+                              || { echo "  $GUID ABSENT. Exposed instead:";
+                                   ls /sys/bus/wmi/devices/ 2>/dev/null | sed 's/^/    /'; }
+    echo "== module ==";    echo "  loaded: $(lsmod | grep -c '^acpi_call')"
+                            echo "  /proc/acpi/call: $([[ -e $CALL ]] && echo present || echo MISSING)"
+                            echo "  signed: $(modinfo acpi_call 2>/dev/null | awk -F': *' '/^signer/{print $2}')"
+                            echo "  secureboot: $(mokutil --sb-state 2>/dev/null | head -1)"
+                            echo "  lockdown: $(cat /sys/kernel/security/lockdown 2>/dev/null)"
+    echo "== config ==";    echo "  /etc/acer-backlight.conf: order=$CHANNEL_ORDER zones='$ZONES_ALL'"
+                            echo "  /etc/default/acer-backlight:"
+                            sed 's/^/    /' /etc/default/acer-backlight 2>/dev/null || echo "    (missing)"
+    echo "== resume hook =="
+                            for d in /usr/lib/systemd/system-sleep /lib/systemd/system-sleep; do
+                              [[ -e $d/acer-backlight ]] && ls -l "$d/acer-backlight" | sed 's/^/  /'
+                            done
+                            [[ -e /usr/lib/systemd/system-sleep/acer-backlight || -e /lib/systemd/system-sleep/acer-backlight ]] \
+                              || echo "  NOT INSTALLED — reinstall with: sudo ./install.sh"
+    echo "== boot unit ==";  systemctl is-enabled acer-backlight.service 2>&1 | sed 's/^/  /'
+    echo "== resume log =="; journalctl -t acer-backlight -n 10 --no-pager 2>/dev/null | sed 's/^/  /' \
+                              || echo "  (no journal entries — hook has not run since install)"
+    exit 0 ;;
+
   detect)
     echo "version: $VERSION"
     echo "vendor : $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)"
@@ -150,7 +178,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 

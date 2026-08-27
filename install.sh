@@ -14,7 +14,9 @@ MODC=/etc/modules-load.d/acpi_call.conf
 SUDOD=/etc/sudoers.d/acer-backlight
 DESK=/usr/share/applications/acer-backlight.desktop
 ICON=/usr/share/icons/hicolor/scalable/apps/acer-backlight.svg
-SLEEP=/usr/lib/systemd/system-sleep/acer-backlight
+SLEEPDIR=/usr/lib/systemd/system-sleep
+[[ -d /usr/lib/systemd ]] || SLEEPDIR=/lib/systemd/system-sleep
+SLEEP=$SLEEPDIR/acer-backlight
 
 [[ $EUID -eq 0 ]] || { echo "run with sudo"; exit 1; }
 
@@ -98,14 +100,29 @@ U
 # Resume is handled here, not by the unit. A unit that is WantedBy both
 # multi-user.target and suspend.target does not reliably fire on wake;
 # /usr/lib/systemd/system-sleep is the documented hook and runs with "post".
-install -d /usr/lib/systemd/system-sleep
+install -d "$SLEEPDIR"
 cat > "$SLEEP" <<'S'
 #!/bin/sh
 # Restore the keyboard backlight after resume. Called with: pre|post <suspend|hibernate>
+# Logs to the journal either way:  journalctl -t acer-backlight
 [ "$1" = post ] || exit 0
 [ -r /etc/default/acer-backlight ] && . /etc/default/acer-backlight
-/sbin/modprobe acpi_call 2>/dev/null
-exec /usr/local/bin/acer-backlight -b "${BRIGHT:-60}" "${COLOR:-warm}"
+
+# The EC is not always ready the instant the kernel resumes, and acpi_call may
+# not be back yet. Retry for a few seconds rather than failing silently.
+n=0
+while [ "$n" -lt 6 ]; do
+    modprobe acpi_call 2>/dev/null
+    if [ -e /proc/acpi/call ] \
+       && /usr/local/bin/acer-backlight -b "${BRIGHT:-60}" "${COLOR:-warm}" 2>/dev/null; then
+        logger -t acer-backlight "resume: restored ${COLOR:-warm} at ${BRIGHT:-60}% (attempt $((n+1)))"
+        exit 0
+    fi
+    n=$((n + 1))
+    sleep 1
+done
+logger -t acer-backlight "resume: FAILED - /proc/acpi/call missing or write rejected"
+exit 0
 S
 chmod 755 "$SLEEP"
 
