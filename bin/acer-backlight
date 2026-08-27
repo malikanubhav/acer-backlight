@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.4.0
+VERSION=1.5.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -189,6 +189,15 @@ case "${1:-}" in
     wmbb $((0x00000777)) >/dev/null
     echo "zone enable mask set (all zones)"; exit 0 ;;
 
+  hwbright)
+    # fn 0x67 mode 0x01 -> ECMD{0x03,0x00,0xC4,0x03,<value>}. This is the controller's
+    # own brightness byte, separate from the RGB scaling that -b does. If suspend
+    # zeroes it, every colour write lands at zero brightness and the keys stay dark.
+    need_root; have_call || die "acpi_call not loaded"
+    v=${2:-255}; [[ $v =~ ^[0-9]+$ ]] && (( v <= 255 )) || die "hwbright takes 0-255"
+    wmbb $(( (1 << 28) | (v << 16) )) >/dev/null
+    echo "hardware brightness set to $v"; exit 0 ;;
+
   restore)
     # Full re-init, used after resume. Master enable, then every selector, twice.
     # The setter cannot report failure, so the cheap insurance is to do it all.
@@ -200,7 +209,8 @@ case "${1:-}" in
     rr=$(( 16#${hexv:0:2} * br / 100 )); gg=$(( 16#${hexv:2:2} * br / 100 )); bb=$(( 16#${hexv:4:2} * br / 100 ))
     for pass in 1 2; do
         master on
-        wmbb $((0x00000777)) >/dev/null      # re-enable every zone before colouring
+        wmbb $((0x00000777)) >/dev/null            # mode 0: enable every zone
+        wmbb $(( (1 << 28) | (255 << 16) )) >/dev/null   # mode 1: hardware brightness to max
         for z in $ZONES_ALL; do paint "$z" "$rr" "$gg" "$bb"; done
         [[ $pass == 1 ]] && sleep 1
     done
@@ -216,7 +226,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | doctor | ready | zones-on | restore | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | zones-on | hwbright | restore | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
