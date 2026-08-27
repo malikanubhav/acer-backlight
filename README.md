@@ -42,11 +42,15 @@ Ubuntu 24.04, Secure Boot on). Reports from other models welcome.
 ## Install
 
 ```bash
-sudo apt install acpi-call-dkms python3-gi python3-cairo python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1
 git clone https://github.com/malikanubhav/acer-backlight.git
 cd acer-backlight
 sudo ./install.sh
 ```
+
+The installer pulls in what it needs — `acpi-call-dkms`, `python3-gi`, `python3-cairo`,
+`python3-gi-cairo`, `gir1.2-gtk-4.0`, `gir1.2-adw-1` — on Debian and Ubuntu. On other
+distros it lists them and stops rather than guessing package names. Skip the automatic
+step with `sudo SKIP_DEPS=1 ./install.sh`.
 
 ### Secure Boot
 

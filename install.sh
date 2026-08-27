@@ -27,26 +27,43 @@ if [[ ${1:-install} == uninstall ]]; then
     exit 0
 fi
 
-# --- dependency check -----------------------------------------------------
-miss=()
+# --- dependencies ---------------------------------------------------------
+# Package names are Debian/Ubuntu. On other distros the script reports what is
+# missing and stops rather than guessing at package names.
+need_pkgs=()
 python3 -c "import gi; gi.require_version('Gtk','4.0'); gi.require_version('Adw','1')" 2>/dev/null \
-    || miss+=("python3-gi gir1.2-gtk-4.0 gir1.2-adw-1")
+    || need_pkgs+=(python3-gi gir1.2-gtk-4.0 gir1.2-adw-1)
 # python3-gi-cairo provides gi._gi_cairo, the PyGObject<->cairo bridge. Without it the
 # colour wheel silently fails to draw while the rest of the window works fine.
 python3 -c "import cairo, gi._gi_cairo" 2>/dev/null \
-    || miss+=("python3-cairo python3-gi-cairo")
-modinfo acpi_call >/dev/null 2>&1 || miss+=("acpi-call-dkms")
-if (( ${#miss[@]} )); then
-    echo "Missing dependencies. Install them first:"
-    echo "    sudo apt install ${miss[*]}"
-    echo
-    [[ " ${miss[*]} " == *acpi-call-dkms* ]] && cat <<'N'
-NOTE: if Secure Boot is enabled, acpi-call-dkms asks you to set a one-time
-password during install. Reboot afterwards and choose "Enroll MOK" on the
-blue screen, entering that password. Without it the module cannot load.
-Check with: mokutil --sb-state
-N
-    exit 1
+    || need_pkgs+=(python3-cairo python3-gi-cairo)
+modinfo acpi_call >/dev/null 2>&1 || need_pkgs+=(acpi-call-dkms)
+
+if (( ${#need_pkgs[@]} )) && [[ ${SKIP_DEPS:-} != 1 ]]; then
+    if ! command -v apt-get >/dev/null; then
+        echo "Missing dependencies, and this is not a Debian/Ubuntu system."
+        echo "Install the equivalents of: ${need_pkgs[*]}"
+        exit 1
+    fi
+    echo "Installing dependencies: ${need_pkgs[*]}"
+    if [[ " ${need_pkgs[*]} " == *acpi-call-dkms* ]] && [[ $(mokutil --sb-state 2>/dev/null) == *enabled* ]]; then
+        cat <<'W'
+
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Secure Boot is ON.                                          │
+  │  acpi-call-dkms will ask you to invent a one-time password.  │
+  │  Write it down. After this finishes:                         │
+  │    1. reboot                                                 │
+  │    2. choose "Enroll MOK" on the blue screen                 │
+  │    3. enter that password                                    │
+  │  The module cannot load until you do.                        │
+  └──────────────────────────────────────────────────────────────┘
+
+W
+        read -rp "  Press Enter to continue, Ctrl+C to abort " _ || true
+    fi
+    apt-get update -qq || true
+    apt-get install -y "${need_pkgs[@]}" || { echo "apt failed — install manually: ${need_pkgs[*]}"; exit 1; }
 fi
 
 # --- files ----------------------------------------------------------------
@@ -121,6 +138,17 @@ command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -qf /usr/sh
 command -v update-desktop-database >/dev/null && update-desktop-database /usr/share/applications || true
 
 echo "installed."
+if ! modprobe acpi_call 2>/dev/null; then
+    echo
+    echo "  NOTE: acpi_call is present but will not load."
+    if [[ $(mokutil --sb-state 2>/dev/null) == *enabled* ]]; then
+        echo "  Secure Boot is on and your key is not enrolled yet."
+        echo "  Reboot, choose \"Enroll MOK\", and enter the password you set."
+    else
+        echo "  Try: sudo dkms autoinstall && sudo modprobe acpi_call"
+    fi
+    echo
+fi
 "$BIN" detect
 echo
 echo "Open \"Acer Backlight\" from your app grid, or try:  sudo acer-backlight purple"
