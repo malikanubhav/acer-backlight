@@ -144,9 +144,16 @@ time instead of across keys:
 | `rainbow` | cycles hue continuously |
 | `strobe` | hard on/off square wave, no fade |
 | `colorloop` | jumps between preset colours, no fade |
+| `shift` | smoothly blends through the preset palette (PredatorSense calls this "Shifting") |
 | `heartbeat` | two quick pulses then a pause |
 | `flicker` | candle-like randomised brightness, smoothed |
 | `reactive` | flashes the whole board on any keypress, decaying to a faint idle glow — the closest analogue to per-key reactive typing lights this single-zone hardware can do |
+
+Acer's own PredatorSense (the RGB software for Predator/Nitro siblings of this hardware)
+also offers **Wave** and **Zoom** — both are genuinely spatial, brightness or colour
+moving across physically distinct zones, which this single-zone hardware does not have.
+Every effect PredatorSense has that only needs one zone (Static, Breathing, Neon/rainbow,
+Shifting) is covered above.
 
 It runs as a background process tracked in `/run/acer-backlight-effect.pid`; any
 subsequent colour change, `sleep-prep`, or `reset` stops it automatically so it can't
