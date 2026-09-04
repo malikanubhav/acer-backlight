@@ -2,13 +2,14 @@
 """acer-backlight-effectd — background animation loop for the Acer keyboard backlight.
 
 Only ever writes ACPI fn 0x67 (keyboard lighting), same interface acer-backlight uses.
-Not meant to be run directly: `acer-backlight effect breathe|rainbow|off [seconds]`
-starts/stops this as a tracked background process.
+Not meant to be run directly: `acer-backlight effect <mode> [seconds]` starts/stops
+this as a tracked background process. Modes: breathe, rainbow, strobe, colorloop,
+heartbeat, flicker.
 
 Single-zone hardware (verified — see docs/PROTOCOL.md), so "motion" here means the
 whole keyboard changing over time, not light travelling across keys.
 """
-import sys, os, time, math, colorsys, signal
+import sys, os, time, math, random, colorsys, signal
 
 CALL = "/proc/acpi/call"
 M = r"\_SB.WMI.WMBB"
@@ -61,6 +62,15 @@ def base_colour():
     return tuple(int(hexv[i:i + 2], 16) for i in (0, 2, 4))
 
 
+LOOP_COLOURS = ["warm", "red", "orange", "yellow", "green", "teal",
+                "cyan", "blue", "purple", "magenta", "pink", "white"]
+
+
+def hexrgb(name):
+    hexv = NAMED.get(name, name)
+    return tuple(int(hexv[i:i + 2], 16) for i in (0, 2, 4))
+
+
 running = True
 
 
@@ -80,14 +90,44 @@ dt = 1.0 / FPS
 r0, g0, b0 = base_colour()
 master(True)
 t = 0.0
+flicker_level, flicker_target, flicker_next = 1.0, 1.0, 0.0
 while running:
     if mode == "breathe":
         level = (math.sin(2 * math.pi * t / period - math.pi / 2) + 1) / 2  # 0..1, starts dark
         r, g, b = round(r0 * level), round(g0 * level), round(b0 * level)
+
     elif mode == "rainbow":
         hue = (t / period) % 1.0
         rf, gf, bf = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
         r, g, b = round(rf * 255), round(gf * 255), round(bf * 255)
+
+    elif mode == "strobe":
+        # Hard on/off square wave, not a fade — a snappy flash rather than breathe's fade.
+        on = (t % period) < (period / 2)
+        r, g, b = (r0, g0, b0) if on else (0, 0, 0)
+
+    elif mode == "colorloop":
+        # Discrete jump between preset colours, no fade — distinct from rainbow's
+        # continuous hue sweep and from the manual Ctrl+Alt+C cycle shortcut.
+        idx = int(t / period) % len(LOOP_COLOURS)
+        r, g, b = hexrgb(LOOP_COLOURS[idx])
+
+    elif mode == "heartbeat":
+        # Two quick pulses then a pause, like a heart-rate monitor blip.
+        p = (t % period) / period
+        env = max(0.0, 1 - abs(p - 0.05) / 0.05, 1 - abs(p - 0.22) / 0.07)
+        env = min(env, 1.0)
+        r, g, b = round(r0 * env), round(g0 * env), round(b0 * env)
+
+    elif mode == "flicker":
+        # Candle-like: a new random brightness target every ~0.1-0.3s, smoothed
+        # toward it each frame so it wavers instead of strobing.
+        if t >= flicker_next:
+            flicker_target = random.uniform(0.5, 1.0)
+            flicker_next = t + random.uniform(0.1, 0.3)
+        flicker_level += (flicker_target - flicker_level) * 0.2
+        r, g, b = round(r0 * flicker_level), round(g0 * flicker_level), round(b0 * flicker_level)
+
     else:
         break
     for z in ZONES:
