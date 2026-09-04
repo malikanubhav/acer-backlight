@@ -124,6 +124,10 @@ gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/or
 gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ binding '<Control><Alt>k'
 ```
 
+`bin/acer-backlight-cycle` steps through a preset colour list at full brightness on each
+press, tracking its position in `~/.cache/acer-backlight-cycle-state`. Install and bind
+the same way, using a second `custom-keybindings` slot (`custom1`, `<Control><Alt>c`).
+
 ## Safety
 
 - Only ACPI function `0x67` (keyboard lighting) is ever written.
