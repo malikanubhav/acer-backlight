@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.9.0
+VERSION=1.9.1
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -336,6 +336,11 @@ for z in $ZONES; do paint "$z" "$r" "$g" "$b"; done
 # picked in the GUI never reach /etc/default/acer-backlight, so every suspend or reboot
 # reverts the keyboard to the installer's original "warm at 60%" default instead of
 # whatever the user last chose — the "backlight doesn't come back" reports were this.
-if [[ $ZONES == "$ZONES_ALL" ]]; then
+#
+# Never persist black, even from an explicit "off": black IS "off", and restore/boot
+# reading it back as the default made "off" and "on" (restore) paint the same colour —
+# Ctrl+Alt+K's toggle looked completely dead because both its states were indistinguishable.
+# "off" should darken the keyboard without ever redefining what "on" means.
+if [[ $ZONES == "$ZONES_ALL" && $hex != 000000 ]]; then
     printf '# Colour restored at boot and after resume.\n# Any acer-backlight colour name or 6-digit hex.\nCOLOR=%s\nBRIGHT=%s\n' "$hex" "$BRIGHT" > /etc/default/acer-backlight 2>/dev/null
 fi
