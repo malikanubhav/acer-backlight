@@ -4,8 +4,17 @@
 # default automatically (acer-backlight >= 1.8.0), so cycling also fixes an
 # "off" state left over from the toggle/GUI power button.
 STATE=~/.cache/acer-backlight-cycle-state
+DEBOUNCE=~/.cache/acer-backlight-cycle-lastrun
 BIN=/usr/local/bin/acer-backlight
 COLOURS=(warm red amber orange yellow lime green mint teal cyan sky blue purple violet magenta pink white)
+
+# Key auto-repeat on a slightly-held combo can fire this twice in a blink,
+# skipping a colour without the user meaning to. Ignore a repeat within 500ms.
+now=${EPOCHREALTIME/./}
+last=$(cat "$DEBOUNCE" 2>/dev/null)
+[[ $last =~ ^[0-9]+$ ]] || last=0
+(( now - last < 500000 )) && exit 0
+echo "$now" > "$DEBOUNCE"
 
 idx=$(cat "$STATE" 2>/dev/null)
 [[ $idx =~ ^[0-9]+$ ]] || idx=-1

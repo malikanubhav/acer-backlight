@@ -6,8 +6,20 @@
 # only an explicit colour choice (GUI or CLI) should ever change what comes
 # back after suspend. On uses `restore`, the same double-pass re-init the
 # resume hook uses, so the toggle is exactly as robust as suspend/resume.
+#
+# Debounced: holding the key combo a beat too long triggers GNOME's key
+# auto-repeat, firing this script twice in under a blink — two rapid toggles
+# cancel out and look like "press again, nothing happens." Ignore a second
+# invocation within 500ms of the last one.
 STATE=~/.cache/acer-backlight-toggle-state
+DEBOUNCE=~/.cache/acer-backlight-toggle-lastrun
 BIN=/usr/local/bin/acer-backlight
+
+now=${EPOCHREALTIME/./}
+last=$(cat "$DEBOUNCE" 2>/dev/null)
+[[ $last =~ ^[0-9]+$ ]] || last=0
+(( now - last < 500000 )) && exit 0
+echo "$now" > "$DEBOUNCE"
 
 if [[ "$(cat "$STATE" 2>/dev/null)" == off ]]; then
     sudo -n "$BIN" restore >/dev/null 2>&1
