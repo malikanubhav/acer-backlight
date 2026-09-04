@@ -101,11 +101,35 @@ U
 install -d /usr/lib/systemd/system-sleep
 cat > "$SLEEP" <<'S'
 #!/bin/sh
-# Restore the keyboard backlight after resume. Called with: pre|post <suspend|hibernate>
-[ "$1" = post ] || exit 0
-[ -r /etc/default/acer-backlight ] && . /etc/default/acer-backlight
-/sbin/modprobe acpi_call 2>/dev/null
-exec /usr/local/bin/acer-backlight -b "${BRIGHT:-60}" "${COLOR:-warm}"
+# Keyboard backlight across suspend. Called with: pre|post <suspend|hibernate>
+# Log:  journalctl -t acer-backlight
+BIN=/usr/local/bin/acer-backlight
+
+case "$1" in
+pre)
+    # Take the lighting down cleanly before the machine sleeps. On some kernels a
+    # controller suspended mid-active-state comes back latched — deaf to every ACPI
+    # write until a full power cycle. Going down idle avoids entering that state.
+    modprobe acpi_call 2>/dev/null
+    out=$("$BIN" sleep-prep 2>&1)
+    logger -t acer-backlight "suspend: $out"
+    ;;
+post)
+    # A colour write cannot report failure (the setter's body is inside If(ECOK) and
+    # returns 0x67 regardless), so wait for a getter to answer before writing.
+    n=0
+    while [ "$n" -lt 30 ]; do
+        modprobe acpi_call 2>/dev/null
+        [ -e /proc/acpi/call ] && "$BIN" ready >/dev/null 2>&1 && break
+        n=$((n + 1)); sleep 1
+    done
+    out=$("$BIN" restore 2>&1)
+    sleep 4
+    "$BIN" restore >/dev/null 2>&1
+    logger -t acer-backlight "resume: EC ready after ${n}s; $out"
+    ;;
+esac
+exit 0
 S
 chmod 755 "$SLEEP"
 

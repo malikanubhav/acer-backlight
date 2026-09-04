@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.1.0
+VERSION=1.8.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -25,8 +25,12 @@ CONF=/etc/acer-backlight.conf
 
 # Per-model settings, discovered by `calibrate`. Defaults are the A715-79G values.
 CHANNEL_ORDER=BRG     # byte order at [23:16][15:8][7:0]
-ZONES_ALL="0 1 2 3"   # zone indices to paint. NEVER 4/5/6 — undocumented, latch the controller off.
 [[ -r $CONF ]] && . "$CONF"
+# Always paint all four documented selectors, whatever the config says. Extra writes
+# are no-ops on single-zone hardware, and a machine that recorded zones='0' during
+# calibration was left with a backlight that would not come back after resume.
+# NEVER 4/5/6 — undocumented, they latch the controller off.
+ZONES_ALL="0 1 2 3"
 
 declare -A NAMED=(
   [off]=000000    [black]=000000  [white]=ffffff  [red]=ff0000   [green]=00ff00
@@ -82,7 +86,90 @@ case "${1:-}" in
     else
         echo "latest:  ${new:-unknown}"
     fi
-    bash "$tmp/r/install.sh"
+    # exec, not call: this process is running from the file install.sh replaces.
+    # exec swaps the process image so nothing is still reading the old script.
+    keep=$(mktemp -d); cp -r "$tmp/r/." "$keep/"; trap - EXIT; rm -rf "$tmp"
+    exec bash "$keep/install.sh" ;;
+
+  ready)
+    # Is the EC actually accepting commands? Every GCMD branch is gated on ECOK and
+    # returns Ones when it is false, so a getter that comes back 0xffffffff means the
+    # controller is not ready — even though a setter would still report success.
+    need_root; have_call || die "acpi_call not loaded"
+    echo "$M 0x0 0x63 b00" > "$CALL" 2>/dev/null
+    r=$(tr -d '\0' < "$CALL")
+    if [[ $r == 0xffffffff || -z $r || $r == "not called" ]]; then
+        echo "EC not ready (getter returned ${r:-nothing})"; exit 1
+    fi
+    echo "EC ready (getter returned $r)"; exit 0 ;;
+
+  ecdump)
+    # READ-ONLY snapshot of all 256 EC registers. ec_sys is loaded without
+    # write_support, so this cannot alter anything.
+    need_root
+    modprobe ec_sys 2>/dev/null
+    io=/sys/kernel/debug/ec/ec0/io
+    [[ -r $io ]] || die "$io unreadable — ec_sys did not load"
+    h=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+    out=$h/ec-${2:?usage: ecdump <label>}.txt
+    od -A x -t x1 -v "$io" > "$out"
+    echo "captured $out"; exit 0 ;;
+
+  ecdiff)
+    h=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+    python3 - "$h/ec-${2:?usage: ecdiff <a> <b>}.txt" "$h/ec-${3:?usage: ecdiff <a> <b>}.txt" <<'PYEOF'
+import sys
+def load(p):
+    d = {}
+    for line in open(p):
+        f = line.split()
+        if len(f) < 2: continue
+        try: off = int(f[0], 16)
+        except ValueError: continue
+        for i, b in enumerate(f[1:]): d[off + i] = b
+    return d
+A, B = load(sys.argv[1]), load(sys.argv[2])
+# 0x07/0x32/0x66/0x67/0xd1/0xd3 drift on their own (temps, fan counters);
+# 0xf8-0xfd are the ACPI mailbox (FCMD/FDAT/FBUF/FBF1/FBF2/FBF3), not state.
+noisy = {0x07,0x32,0x66,0x67,0xd1,0xd3,0xf8,0xf9,0xfa,0xfb,0xfc,0xfd}
+real = [o for o in sorted(A) if o in B and A[o] != B[o] and o not in noisy]
+skip = [o for o in sorted(A) if o in B and A[o] != B[o] and o in noisy]
+print(f"  {len(real)} meaningful byte(s) changed, {len(skip)} known-noisy ignored\n")
+for o in real:
+    print(f"    EC[0x{o:02x}]   {A[o]} -> {B[o]}")
+if not real:
+    print("    nothing outside the known-noisy set changed.")
+PYEOF
+    exit 0 ;;
+
+  doctor)
+    # One command that produces everything needed to diagnose a report.
+    echo "== version ==";   echo "  $VERSION"
+    echo "== machine ==";   for f in sys_vendor product_name bios_version; do
+                              echo "  $f: $(cat /sys/class/dmi/id/$f 2>/dev/null)"; done
+                            echo "  kernel: $(uname -r)"
+                            echo "  sleep:  $(cat /sys/power/mem_sleep 2>/dev/null)"
+    echo "== wmi ==";       [[ -e /sys/bus/wmi/devices/$GUID ]] \
+                              && echo "  $GUID present" \
+                              || { echo "  $GUID ABSENT. Exposed instead:";
+                                   ls /sys/bus/wmi/devices/ 2>/dev/null | sed 's/^/    /'; }
+    echo "== module ==";    echo "  loaded: $(lsmod | grep -c '^acpi_call')"
+                            echo "  /proc/acpi/call: $([[ -e $CALL ]] && echo present || echo MISSING)"
+                            echo "  signed: $(modinfo acpi_call 2>/dev/null | awk -F': *' '/^signer/{print $2}')"
+                            echo "  secureboot: $(mokutil --sb-state 2>/dev/null | head -1)"
+                            echo "  lockdown: $(cat /sys/kernel/security/lockdown 2>/dev/null)"
+    echo "== config ==";    echo "  /etc/acer-backlight.conf: order=$CHANNEL_ORDER zones='$ZONES_ALL'"
+                            echo "  /etc/default/acer-backlight:"
+                            sed 's/^/    /' /etc/default/acer-backlight 2>/dev/null || echo "    (missing)"
+    echo "== resume hook =="
+                            for d in /usr/lib/systemd/system-sleep /lib/systemd/system-sleep; do
+                              [[ -e $d/acer-backlight ]] && ls -l "$d/acer-backlight" | sed 's/^/  /'
+                            done
+                            [[ -e /usr/lib/systemd/system-sleep/acer-backlight || -e /lib/systemd/system-sleep/acer-backlight ]] \
+                              || echo "  NOT INSTALLED — reinstall with: sudo ./install.sh"
+    echo "== boot unit ==";  systemctl is-enabled acer-backlight.service 2>&1 | sed 's/^/  /'
+    echo "== resume log =="; journalctl -t acer-backlight -n 10 --no-pager 2>/dev/null | sed 's/^/  /' \
+                              || echo "  (no journal entries — hook has not run since install)"
     exit 0 ;;
 
   detect)
@@ -121,15 +208,10 @@ case "${1:-}" in
     third=$(tr -d "${seen[0]}${seen[1]}" <<< "RGB")
     order="${seen[0]}${seen[1]}${third}"
 
-    # zone count: paint zone 0 red and zone 1 blue; if both show, zones are real
-    paint 0 255 0 0; paint 1 0 0 255; sleep 1
-    read -rp "  Do you see TWO colours across the keyboard, or one? [two/one] " z
-    [[ ${z,,} == two* ]] && zones="0 1 2 3" || zones="0"
-
-    printf 'CHANNEL_ORDER=%s\nZONES_ALL="%s"\n' "$order" "$zones" > "$CONF"
-    echo; echo "saved $CONF  (order=$order, zones='$zones')"
-    CHANNEL_ORDER=$order ZONES_ALL=$zones
-    for z in $zones; do paint "$z" 255 176 96; done
+    printf 'CHANNEL_ORDER=%s\n' "$order" > "$CONF"
+    echo; echo "saved $CONF  (order=$order)"
+    CHANNEL_ORDER=$order
+    for z in $ZONES_ALL; do paint "$z" 255 176 96; done
     echo "calibrated — try: sudo $0 purple"
     exit 0 ;;
 
@@ -139,6 +221,50 @@ case "${1:-}" in
     need_root; have_call || die "acpi_call not loaded"
     master on; for z in $ZONES_ALL; do paint "$z" 255 255 255; done
     echo "master on + all zones white"; exit 0 ;;
+
+  zones-on)
+    # fn 0x67 mode 0x00 -> EC 0xC2, the zone ENABLE mask. Separate from colour:
+    # a disabled zone ignores every colour write. ARGS 0x777 sets all nine mask bits
+    # (the firmware gathers them from ARGS bits 0-2, 4-6 and 8-10).
+    need_root; have_call || die "acpi_call not loaded"
+    wmbb $((0x00000777)) >/dev/null
+    echo "zone enable mask set (all zones)"; exit 0 ;;
+
+  hwbright)
+    # fn 0x67 mode 0x01 -> ECMD{0x03,0x00,0xC4,0x03,<value>}. This is the controller's
+    # own brightness byte, separate from the RGB scaling that -b does. If suspend
+    # zeroes it, every colour write lands at zero brightness and the keys stay dark.
+    need_root; have_call || die "acpi_call not loaded"
+    v=${2:-255}; [[ $v =~ ^[0-9]+$ ]] && (( v <= 255 )) || die "hwbright takes 0-255"
+    wmbb $(( (1 << 28) | (v << 16) )) >/dev/null
+    echo "hardware brightness set to $v"; exit 0 ;;
+
+  sleep-prep)
+    # Run BEFORE suspend. A controller that is powered down mid-active-state can come
+    # back latched and deaf to every ACPI write until the machine is fully power
+    # cycled. Blank it and drop the master enable first, so it goes down idle.
+    need_root; have_call || die "acpi_call not loaded"
+    for z in $ZONES_ALL; do paint "$z" 0 0 0; done
+    master off
+    echo "lighting blanked and master disabled for suspend"; exit 0 ;;
+
+  restore)
+    # Full re-init, used after resume. Master enable, then every selector, twice.
+    # The setter cannot report failure, so the cheap insurance is to do it all.
+    need_root; have_call || die "acpi_call not loaded"
+    [[ -r /etc/default/acer-backlight ]] && . /etc/default/acer-backlight
+    col=${COLOR:-warm}; br=${BRIGHT:-60}
+    hexv=${NAMED[${col,,}]:-$col}
+    [[ $hexv =~ ^[0-9a-fA-F]{6}$ ]] || hexv=ffb060
+    rr=$(( 16#${hexv:0:2} * br / 100 )); gg=$(( 16#${hexv:2:2} * br / 100 )); bb=$(( 16#${hexv:4:2} * br / 100 ))
+    for pass in 1 2; do
+        master on
+        wmbb $((0x00000777)) >/dev/null            # mode 0: enable every zone
+        wmbb $(( (1 << 28) | (255 << 16) )) >/dev/null   # mode 1: hardware brightness to max
+        for z in $ZONES_ALL; do paint "$z" "$rr" "$gg" "$bb"; done
+        [[ $pass == 1 ]] && sleep 1
+    done
+    echo "restored $col at $br% across zones $ZONES_ALL"; exit 0 ;;
 esac
 
 # --- colour ---------------------------------------------------------------
@@ -150,7 +276,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | ecdump | ecdiff | zones-on | hwbright | sleep-prep | restore | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
@@ -170,3 +296,11 @@ need_root
 have_call || die "acpi_call not loaded"
 [[ $hex == 000000 ]] || master on
 for z in $ZONES; do paint "$z" "$r" "$g" "$b"; done
+
+# Persist a whole-keyboard write as the new boot/resume default. Without this, colours
+# picked in the GUI never reach /etc/default/acer-backlight, so every suspend or reboot
+# reverts the keyboard to the installer's original "warm at 60%" default instead of
+# whatever the user last chose — the "backlight doesn't come back" reports were this.
+if [[ $ZONES == "$ZONES_ALL" ]]; then
+    printf '# Colour restored at boot and after resume.\n# Any acer-backlight colour name or 6-digit hex.\nCOLOR=%s\nBRIGHT=%s\n' "$hex" "$BRIGHT" > /etc/default/acer-backlight 2>/dev/null
+fi
