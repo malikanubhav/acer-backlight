@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.8.0
+VERSION=1.9.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -41,6 +41,15 @@ declare -A NAMED=(
 die() { echo "acer-backlight: $*" >&2; exit 1; }
 need_root() { [[ $EUID -eq 0 ]] || die "needs root — try: sudo $0 $*"; }
 have_call() { [[ -e $CALL ]] || modprobe acpi_call 2>/dev/null; [[ -e $CALL ]]; }
+
+EFFECT_PIDF=/run/acer-backlight-effect.pid
+# A running effect paints several times a second; anything that sets a static colour
+# or blanks the keyboard must stop it first, or the effect just overwrites it again.
+stop_effect() {
+  [[ -r $EFFECT_PIDF ]] || return 0
+  kill "$(cat "$EFFECT_PIDF")" 2>/dev/null
+  rm -f "$EFFECT_PIDF"
+}
 
 # --- raw WMBB ------------------------------------------------------------
 wmbb() {  # wmbb <32-bit ARGS>
@@ -219,8 +228,31 @@ PYEOF
 
   reset)
     need_root; have_call || die "acpi_call not loaded"
+    stop_effect
     master on; for z in $ZONES_ALL; do paint "$z" 255 255 255; done
     echo "master on + all zones white"; exit 0 ;;
+
+  effect)
+    # Single-zone hardware (see docs/PROTOCOL.md) — no light travels across keys.
+    # "Motion" here is the whole keyboard changing over time: breathe (fade in/out
+    # around the current default colour) or rainbow (cycle hue). Runs as a tracked
+    # background process so a second call can stop it before starting another.
+    need_root; have_call || die "acpi_call not loaded"
+    stop_effect
+    mode=${2:-}
+    case "$mode" in
+      ""|off|stop) echo "effect stopped"; exit 0 ;;
+      breathe|rainbow) : ;;
+      *) die "usage: acer-backlight effect breathe|rainbow|off [seconds-per-cycle]" ;;
+    esac
+    command -v python3 >/dev/null || die "python3 is required for effects"
+    period=${3:-3}
+    [[ $period =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "seconds-per-cycle must be a number"
+    CHANNEL_ORDER=$CHANNEL_ORDER setsid python3 /usr/local/bin/acer-backlight-effectd "$mode" "$period" \
+        </dev/null >/dev/null 2>&1 &
+    echo $! > "$EFFECT_PIDF"
+    disown
+    echo "$mode effect started (pid $(cat "$EFFECT_PIDF"))"; exit 0 ;;
 
   zones-on)
     # fn 0x67 mode 0x00 -> EC 0xC2, the zone ENABLE mask. Separate from colour:
@@ -244,6 +276,7 @@ PYEOF
     # back latched and deaf to every ACPI write until the machine is fully power
     # cycled. Blank it and drop the master enable first, so it goes down idle.
     need_root; have_call || die "acpi_call not loaded"
+    stop_effect
     for z in $ZONES_ALL; do paint "$z" 0 0 0; done
     master off
     echo "lighting blanked and master disabled for suspend"; exit 0 ;;
@@ -276,7 +309,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | doctor | ready | ecdump | ecdiff | zones-on | hwbright | sleep-prep | restore | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | ecdump | ecdiff | zones-on | hwbright | sleep-prep | restore | effect | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
@@ -294,6 +327,7 @@ fi
 
 need_root
 have_call || die "acpi_call not loaded"
+stop_effect
 [[ $hex == 000000 ]] || master on
 for z in $ZONES; do paint "$z" "$r" "$g" "$b"; done
 

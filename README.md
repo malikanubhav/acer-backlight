@@ -128,6 +128,26 @@ gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/or
 press, tracking its position in `~/.cache/acer-backlight-cycle-state`. Install and bind
 the same way, using a second `custom-keybindings` slot (`custom1`, `<Control><Alt>c`).
 
+### Motion effects
+
+This hardware is single-zone (see Safety, and `docs/PROTOCOL.md`) — there is no
+travelling wave across keys, because there's only one LED channel for the whole board.
+`acer-backlight effect breathe|rainbow|off [seconds-per-cycle]` animates that one zone
+over time instead: `breathe` fades the current default colour in and out, `rainbow`
+cycles hue continuously. It runs as a background process tracked in
+`/run/acer-backlight-effect.pid`; any subsequent colour change, `sleep-prep`, or
+`reset` stops it automatically so it can't fight a colour you just set.
+
+`bin/acer-backlight-effect-toggle` cycles off → breathe → rainbow → off on each press.
+It needs `acer-backlight-effectd` installed alongside the main binary:
+
+```bash
+sudo install -m 755 bin/acer-backlight-effectd /usr/local/bin/acer-backlight-effectd
+```
+
+Bind it the same way, using a third `custom-keybindings` slot (`custom2`,
+`<Control><Alt>e`).
+
 ## Safety
 
 - Only ACPI function `0x67` (keyboard lighting) is ever written.

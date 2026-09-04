@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""acer-backlight-effectd — background animation loop for the Acer keyboard backlight.
+
+Only ever writes ACPI fn 0x67 (keyboard lighting), same interface acer-backlight uses.
+Not meant to be run directly: `acer-backlight effect breathe|rainbow|off [seconds]`
+starts/stops this as a tracked background process.
+
+Single-zone hardware (verified — see docs/PROTOCOL.md), so "motion" here means the
+whole keyboard changing over time, not light travelling across keys.
+"""
+import sys, os, time, math, colorsys, signal
+
+CALL = "/proc/acpi/call"
+M = r"\_SB.WMI.WMBB"
+CHANNEL_ORDER = os.environ.get("CHANNEL_ORDER", "BRG")
+ZONES = (0, 1, 2, 3)
+NAMED = {
+    "off": "000000", "black": "000000", "white": "ffffff", "red": "ff0000",
+    "green": "00ff00", "blue": "0000ff", "yellow": "ffff00", "cyan": "00ffff",
+    "magenta": "ff00ff", "purple": "8000ff", "orange": "ff5000", "pink": "ff2080",
+    "teal": "00ff80", "warm": "ffb060",
+}
+
+
+def wmbb(args):
+    bb = "b%02x%02x%02x%02x" % (args & 0xFF, (args >> 8) & 0xFF, (args >> 16) & 0xFF, (args >> 24) & 0xFF)
+    try:
+        open(CALL, "w").write(f"{M} 0x0 0x67 {bb}\n")
+    except OSError:
+        pass
+
+
+def pack(r, g, b):
+    vals = {"R": r, "G": g, "B": b}
+    out = 0
+    for i, c in enumerate(CHANNEL_ORDER):
+        out |= vals[c] << (16 - i * 8)
+    return out
+
+
+def master(on):
+    wmbb(0x40010000 if on else 0x40000000)
+
+
+def paint(zone, r, g, b):
+    wmbb(0xF0000000 | (zone << 24) | pack(r, g, b))
+
+
+def base_colour():
+    """The colour breathe fades around — whatever is set as the boot/resume default."""
+    colour = "ffb060"
+    try:
+        for line in open("/etc/default/acer-backlight"):
+            if line.startswith("COLOR="):
+                colour = line.strip().split("=", 1)[1]
+    except OSError:
+        pass
+    hexv = NAMED.get(colour.lower(), colour)
+    if len(hexv) != 6:
+        hexv = "ffb060"
+    return tuple(int(hexv[i:i + 2], 16) for i in (0, 2, 4))
+
+
+running = True
+
+
+def _stop(*_):
+    global running
+    running = False
+
+
+signal.signal(signal.SIGTERM, _stop)
+signal.signal(signal.SIGINT, _stop)
+
+mode = sys.argv[1] if len(sys.argv) > 1 else "breathe"
+period = float(sys.argv[2]) if len(sys.argv) > 2 else 3.0
+FPS = 30
+dt = 1.0 / FPS
+
+r0, g0, b0 = base_colour()
+master(True)
+t = 0.0
+while running:
+    if mode == "breathe":
+        level = (math.sin(2 * math.pi * t / period - math.pi / 2) + 1) / 2  # 0..1, starts dark
+        r, g, b = round(r0 * level), round(g0 * level), round(b0 * level)
+    elif mode == "rainbow":
+        hue = (t / period) % 1.0
+        rf, gf, bf = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+        r, g, b = round(rf * 255), round(gf * 255), round(bf * 255)
+    else:
+        break
+    for z in ZONES:
+        paint(z, r, g, b)
+    time.sleep(dt)
+    t += dt
