@@ -135,11 +135,22 @@ the same way, using a second `custom-keybindings` slot (`custom1`, `<Control><Al
 
 This hardware is single-zone (see Safety, and `docs/PROTOCOL.md`) — there is no
 travelling wave across keys, because there's only one LED channel for the whole board.
-`acer-backlight effect breathe|rainbow|off [seconds-per-cycle]` animates that one zone
-over time instead: `breathe` fades the current default colour in and out, `rainbow`
-cycles hue continuously. It runs as a background process tracked in
-`/run/acer-backlight-effect.pid`; any subsequent colour change, `sleep-prep`, or
-`reset` stops it automatically so it can't fight a colour you just set.
+`acer-backlight effect <mode>|off [seconds-per-cycle]` animates that one zone over
+time instead of across keys:
+
+| mode | what it does |
+|---|---|
+| `breathe` | fades the current default colour in and out |
+| `rainbow` | cycles hue continuously |
+| `strobe` | hard on/off square wave, no fade |
+| `colorloop` | jumps between preset colours, no fade |
+| `heartbeat` | two quick pulses then a pause |
+| `flicker` | candle-like randomised brightness, smoothed |
+| `reactive` | flashes the whole board on any keypress, decaying to a faint idle glow — the closest analogue to per-key reactive typing lights this single-zone hardware can do |
+
+It runs as a background process tracked in `/run/acer-backlight-effect.pid`; any
+subsequent colour change, `sleep-prep`, or `reset` stops it automatically so it can't
+fight a colour you just set.
 
 `bin/acer-backlight-effect-toggle` cycles off → breathe → rainbow → off on each press.
 It needs `acer-backlight-effectd` installed alongside the main binary:

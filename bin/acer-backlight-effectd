@@ -4,12 +4,13 @@
 Only ever writes ACPI fn 0x67 (keyboard lighting), same interface acer-backlight uses.
 Not meant to be run directly: `acer-backlight effect <mode> [seconds]` starts/stops
 this as a tracked background process. Modes: breathe, rainbow, strobe, colorloop,
-heartbeat, flicker.
+heartbeat, flicker, reactive.
 
 Single-zone hardware (verified — see docs/PROTOCOL.md), so "motion" here means the
-whole keyboard changing over time, not light travelling across keys.
+whole keyboard changing over time, not light travelling across keys — reactive mode
+flashes the whole board on any keypress, not just the key you hit, for the same reason.
 """
-import sys, os, time, math, random, colorsys, signal
+import sys, os, time, math, random, struct, select, colorsys, signal
 
 CALL = "/proc/acpi/call"
 M = r"\_SB.WMI.WMBB"
@@ -72,6 +73,26 @@ def hexrgb(name):
     return tuple(int(hexv[i:i + 2], 16) for i in (0, 2, 4))
 
 
+def find_keyboard_device():
+    """/dev/input/eventN for the internal keyboard, resolved by name since the
+    number can shift across reboots or machines."""
+    try:
+        for block in open("/proc/bus/input/devices").read().split("\n\n"):
+            if 'Name="AT Translated Set 2 keyboard"' in block:
+                for line in block.splitlines():
+                    if line.startswith("H: Handlers="):
+                        for tok in line.split("=", 1)[1].split():
+                            if tok.startswith("event"):
+                                return f"/dev/input/{tok}"
+    except OSError:
+        pass
+    return "/dev/input/event4"
+
+
+EVENT_FMT = "llHHi"
+EVENT_SIZE = struct.calcsize(EVENT_FMT)
+EV_KEY = 1
+
 running = True
 
 
@@ -92,6 +113,14 @@ r0, g0, b0 = base_colour()
 master(True)
 t = 0.0
 flicker_level, flicker_target, flicker_next = 1.0, 1.0, 0.0
+last_press = -999.0
+kbd_fd = None
+if mode == "reactive":
+    try:
+        kbd_fd = os.open(find_keyboard_device(), os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        kbd_fd = None
+
 while running:
     if mode == "breathe":
         level = (math.sin(2 * math.pi * t / period - math.pi / 2) + 1) / 2  # 0..1, starts dark
@@ -128,6 +157,23 @@ while running:
             flicker_next = t + random.uniform(0.1, 0.3)
         flicker_level += (flicker_target - flicker_level) * 0.2
         r, g, b = round(r0 * flicker_level), round(g0 * flicker_level), round(b0 * flicker_level)
+
+    elif mode == "reactive":
+        # Flash the whole board on any keypress, decaying back to a faint idle glow.
+        # `period` is unused here — decay speed is fixed for a snappy typing feel.
+        if kbd_fd is not None:
+            ready, _, _ = select.select([kbd_fd], [], [], 0)
+            if ready:
+                try:
+                    data = os.read(kbd_fd, EVENT_SIZE * 64)
+                    for i in range(0, len(data) - EVENT_SIZE + 1, EVENT_SIZE):
+                        _, _, etype, _ecode, evalue = struct.unpack(EVENT_FMT, data[i:i + EVENT_SIZE])
+                        if etype == EV_KEY and evalue in (1, 2):  # press or autorepeat
+                            last_press = t
+                except OSError:
+                    pass
+        level = max(0.06, math.exp(-(t - last_press) / 0.25))
+        r, g, b = round(r0 * level), round(g0 * level), round(b0 * level)
 
     else:
         break

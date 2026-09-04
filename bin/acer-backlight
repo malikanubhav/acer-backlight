@@ -243,8 +243,8 @@ PYEOF
     mode=${2:-}
     case "$mode" in
       ""|off|stop) echo "effect stopped"; exit 0 ;;
-      breathe|rainbow|strobe|colorloop|heartbeat|flicker) : ;;
-      *) die "usage: acer-backlight effect breathe|rainbow|strobe|colorloop|heartbeat|flicker|off [seconds-per-cycle]" ;;
+      breathe|rainbow|strobe|colorloop|heartbeat|flicker|reactive) : ;;
+      *) die "usage: acer-backlight effect breathe|rainbow|strobe|colorloop|heartbeat|flicker|reactive|off [seconds-per-cycle]" ;;
     esac
     command -v python3 >/dev/null || die "python3 is required for effects"
     period=${3:-3}
