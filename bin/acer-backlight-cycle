@@ -3,18 +3,18 @@
 # Full brightness each time; a colour write persists as the new boot/resume
 # default automatically (acer-backlight >= 1.8.0), so cycling also fixes an
 # "off" state left over from the toggle/GUI power button.
+#
+# Trailing debounce (see acer-backlight-toggle for why): GNOME fires this
+# once per key-repeat event for as long as the combo is held, not once per
+# press, so a hold can otherwise skip several colours at once.
 STATE=~/.cache/acer-backlight-cycle-state
-DEBOUNCE=~/.cache/acer-backlight-cycle-lastrun
+LOCK=~/.cache/acer-backlight-cycle-pending
 BIN=/usr/local/bin/acer-backlight
 COLOURS=(warm red amber orange yellow lime green mint teal cyan sky blue purple violet magenta pink white)
 
-# Key auto-repeat on a slightly-held combo can fire this twice in a blink,
-# skipping a colour without the user meaning to. Ignore a repeat within 500ms.
-now=${EPOCHREALTIME/./}
-last=$(cat "$DEBOUNCE" 2>/dev/null)
-[[ $last =~ ^[0-9]+$ ]] || last=0
-(( now - last < 500000 )) && exit 0
-echo "$now" > "$DEBOUNCE"
+echo $$ > "$LOCK"
+sleep 0.2
+[[ "$(cat "$LOCK" 2>/dev/null)" == "$$" ]] || exit 0
 
 idx=$(cat "$STATE" 2>/dev/null)
 [[ $idx =~ ^[0-9]+$ ]] || idx=-1
