@@ -139,3 +139,20 @@ Final capability ceiling for the A715-79G:
   - firmware effects (modes 0x07-0x0B)      accepted but no visible effect
                                             (they animate across zones; there is one)
   - per-key colour                          IMPOSSIBLE — no LED matrix controller
+
+## CORRECTION 2026-09-04: mechanism was "last write wins" — actually only zone 0 works
+
+Re-verified independently (fresh `lsusb`/i2c scan, then live zone writes with the
+owner watching the physical keyboard) rather than taking the entry above on faith.
+lsusb/i2c confirm the same as before: no ITE/Holtek controller, i2c has only the
+touchpad and RAM SPD EEPROM. But the zone behaviour is not "one physical zone that
+any selector drives, last write wins":
+
+  - zone 0 red, then zone 1 blue  -> keyboard showed RED
+  - zone 1 blue, then zone 0 red  -> keyboard showed RED again (order doesn't matter)
+  - zone 0 left off, zone 1 green, zone 0 never touched -> NO LIGHT AT ALL
+
+Zone 1 alone produces nothing. It isn't that every selector reaches the same LED —
+only selector 0 is wired to anything. Selectors 1-3 are inert no-ops, not aliases.
+Same practical ceiling (one controllable zone, Wave/Zoom impossible), corrected
+mechanism.
