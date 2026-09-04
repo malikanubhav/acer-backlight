@@ -98,8 +98,31 @@ acer-backlight reset                     recovery, if the controller stops respo
 
 Colours: `white red green blue yellow cyan magenta purple orange pink teal warm off`
 
-Your colour is restored at boot and after resume by a systemd unit. Change the default
-in `/etc/default/acer-backlight`.
+Your colour is restored at boot and after resume by a systemd unit, and whatever you
+last set (GUI or CLI) becomes that default automatically — `/etc/default/acer-backlight`
+updates itself, no manual editing needed.
+
+## Keyboard shortcut
+
+This hardware never sends a keycode for its own Fn+lighting key (verified with
+`evtest` — nothing at all appears, not even on the Fn keypress itself), so no shortcut
+tool can bind to it. `bin/acer-backlight-toggle` is a workaround: it toggles the light
+off (`sleep-prep`, which does not touch the persisted colour) and back on (`restore`,
+the same call resume uses), tracking state in `~/.cache/acer-backlight-toggle-state`.
+
+```bash
+cp bin/acer-backlight-toggle ~/.local/bin/
+```
+
+Then bind it to any key combo via Settings → Keyboard → Custom Shortcuts, or:
+
+```bash
+gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings \
+  "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/']"
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ name 'Toggle Acer Keyboard Backlight'
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ command "$HOME/.local/bin/acer-backlight-toggle"
+gsettings set org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/ binding '<Control><Alt>k'
+```
 
 ## Safety
 
