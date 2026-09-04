@@ -20,6 +20,7 @@ NAMED = {
     "green": "00ff00", "blue": "0000ff", "yellow": "ffff00", "cyan": "00ffff",
     "magenta": "ff00ff", "purple": "8000ff", "orange": "ff5000", "pink": "ff2080",
     "teal": "00ff80", "warm": "ffb060",
+    "lime": "80ff00", "sky": "00aaff", "violet": "aa00ff", "amber": "ffaa00", "mint": "00ffaa",
 }
 
 
@@ -62,8 +63,8 @@ def base_colour():
     return tuple(int(hexv[i:i + 2], 16) for i in (0, 2, 4))
 
 
-LOOP_COLOURS = ["warm", "red", "orange", "yellow", "green", "teal",
-                "cyan", "blue", "purple", "magenta", "pink", "white"]
+LOOP_COLOURS = ["warm", "red", "amber", "orange", "yellow", "lime", "green", "mint",
+                "teal", "cyan", "sky", "blue", "purple", "violet", "magenta", "pink", "white"]
 
 
 def hexrgb(name):

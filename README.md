@@ -96,7 +96,10 @@ acer-backlight version                   show the installed version
 acer-backlight reset                     recovery, if the controller stops responding
 ```
 
-Colours: `white red green blue yellow cyan magenta purple orange pink teal warm off`
+Named colours: `white red green blue yellow cyan magenta purple orange pink teal warm
+lime sky violet amber mint off` — or any 6-digit hex for the other 16.7 million. The
+keyboard controller takes a raw RGB triplet, not a preset index, so these names are
+just convenience aliases, not a hardware limit.
 
 Your colour is restored at boot and after resume by a systemd unit, and whatever you
 last set (GUI or CLI) becomes that default automatically — `/etc/default/acer-backlight`

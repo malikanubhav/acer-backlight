@@ -5,7 +5,7 @@
 # "off" state left over from the toggle/GUI power button.
 STATE=~/.cache/acer-backlight-cycle-state
 BIN=/usr/local/bin/acer-backlight
-COLOURS=(warm red orange yellow green teal cyan blue purple magenta pink white)
+COLOURS=(warm red amber orange yellow lime green mint teal cyan sky blue purple violet magenta pink white)
 
 idx=$(cat "$STATE" 2>/dev/null)
 [[ $idx =~ ^[0-9]+$ ]] || idx=-1
