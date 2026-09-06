@@ -25,7 +25,9 @@ sleep 0.2
 if [[ "$(cat "$STATE" 2>/dev/null)" == off ]]; then
     sudo -n "$BIN" restore >/dev/null 2>&1
     echo on > "$STATE"
+    notify-send -t 1200 "Keyboard backlight" "on" 2>/dev/null
 else
     sudo -n "$BIN" sleep-prep >/dev/null 2>&1
     echo off > "$STATE"
+    notify-send -t 1200 "Keyboard backlight" "off" 2>/dev/null
 fi
