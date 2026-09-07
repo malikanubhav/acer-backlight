@@ -61,6 +61,20 @@ signing key — a one-time step, and it keeps Secure Boot enabled.
 
 Check your state with `mokutil --sb-state`.
 
+## Rainbow
+
+```
+sudo acer-backlight cycle 30      # a full spectrum rotation every 30 seconds
+sudo acer-backlight cycle stop
+```
+
+Or use the **Rainbow** switch in the app, with a speed slider. Setting any solid colour
+stops it automatically.
+
+The firmware's own effect modes only animate *across* zones, so they do nothing on
+single-zone hardware. This walks the hue in software instead — 12 writes a second,
+with the hue derived from wall-clock time so changing speed never makes the colour jump.
+
 ## Update
 
 ```
@@ -92,6 +106,8 @@ acer-backlight 2 red                     one zone (0-3), on multi-zone models
 acer-backlight detect                    identify this machine
 acer-backlight doctor                    full diagnostic — paste this in bug reports
 acer-backlight calibrate                 discover channel order + zone count
+acer-backlight cycle 30                  rainbow — one rotation every 30s (2-600)
+acer-backlight cycle stop                stop the rainbow
 acer-backlight update                    fetch the latest version and reinstall
 acer-backlight version                   show the installed version
 acer-backlight restore                   re-apply the saved colour (full re-init)

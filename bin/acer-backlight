@@ -16,7 +16,7 @@
 #   acer-backlight reset                       acer-backlight calibrate
 set -u
 
-VERSION=1.7.0
+VERSION=1.8.0
 REPO=https://github.com/malikanubhav/acer-backlight.git
 CALL=/proc/acpi/call
 M='\_SB.WMI.WMBB'
@@ -140,6 +140,55 @@ for o in real:
 if not real:
     print("    nothing outside the known-noisy set changed.")
 PYEOF
+    exit 0 ;;
+
+  cycle)
+    # Software rainbow. The firmware effect modes (0x07-0x0B) animate ACROSS zones,
+    # so they do nothing on single-zone hardware — this walks the hue itself.
+    # Hue is derived from wall-clock time, so changing speed never makes it jump.
+    need_root
+    PIDF=/run/acer-backlight-cycle.pid
+    case "${2:-start}" in
+      stop)
+        [[ -f $PIDF ]] && kill "$(cat "$PIDF")" 2>/dev/null
+        rm -f "$PIDF"; echo "cycle stopped"; exit 0 ;;
+      status)
+        if [[ -f $PIDF ]] && kill -0 "$(cat "$PIDF")" 2>/dev/null; then
+            echo "running (pid $(cat "$PIDF"))"; exit 0
+        fi
+        rm -f "$PIDF"; echo "stopped"; exit 1 ;;
+    esac
+    have_call || die "acpi_call not loaded"
+    sec=${2:-30}; [[ $sec =~ ^[0-9]+$ ]] && (( sec >= 2 && sec <= 600 )) || die "cycle <2-600 seconds per rotation> | stop | status"
+    br=${3:-}
+    [[ -z $br ]] && { [[ -r /etc/default/acer-backlight ]] && . /etc/default/acer-backlight; br=${BRIGHT:-60}; }
+    [[ $br =~ ^[0-9]+$ ]] && (( br <= 100 )) || die "brightness must be 0-100"
+
+    [[ -f $PIDF ]] && kill "$(cat "$PIDF")" 2>/dev/null; rm -f "$PIDF"
+    master on
+    setsid python3 - "$sec" "$br" "$CHANNEL_ORDER" "$ZONES_ALL" >/dev/null 2>&1 <<'PYEOF' &
+import sys, time, colorsys, signal
+sec, bright, order, zones = float(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4].split()
+FPS = 12                     # ~12 writes/s per zone; the EC mutex will not thank us for more
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+def pack(r, g, b):
+    out = 0
+    for i, c in enumerate(order):
+        out |= {"R": r, "G": g, "B": b}[c] << (16 - i * 8)
+    return out
+with open("/proc/acpi/call", "w", buffering=1) as f:
+    while True:
+        h = (time.time() / sec) % 1.0
+        r, g, b = (int(round(v * 255 * bright / 100)) for v in colorsys.hsv_to_rgb(h, 1.0, 1.0))
+        for z in zones:
+            a = 0xF0000000 | (int(z) << 24) | pack(r, g, b)
+            buf = "b%02x%02x%02x%02x" % (a & 0xff, (a >> 8) & 0xff, (a >> 16) & 0xff, (a >> 24) & 0xff)
+            try: f.write("\\_SB.WMI.WMBB 0x0 0x67 %s\n" % buf)
+            except OSError: pass
+        time.sleep(1.0 / FPS)
+PYEOF
+    echo $! > "$PIDF"
+    echo "cycling — one full rotation every ${sec}s at ${br}%  (stop: $0 cycle stop)"
     exit 0 ;;
 
   doctor)
@@ -276,7 +325,7 @@ ZONES=$ZONES_ALL
 if [[ ${1:-} =~ ^[0-3]$ ]] && [[ $# -ge 2 ]]; then ZONES=$1; shift; fi
 
 spec=${1:-} ; [[ -n $spec ]] || die "usage: acer-backlight [-b 0-100] [zone 0-3] <colour|hex|off>
-       or: acer-backlight detect | doctor | ready | ecdump | ecdiff | zones-on | hwbright | sleep-prep | restore | calibrate | update | version | on | reset"
+       or: acer-backlight detect | doctor | ready | cycle | ecdump | ecdiff | zones-on | hwbright | sleep-prep | restore | calibrate | update | version | on | reset"
 hex=${NAMED[${spec,,}]:-$spec}
 [[ $hex =~ ^[0-9a-fA-F]{6}$ ]] || die "unknown colour '$spec' (try: ${!NAMED[*]})"
 
@@ -294,5 +343,7 @@ fi
 
 need_root
 have_call || die "acpi_call not loaded"
+# a running rainbow would overwrite this a twelfth of a second later
+[[ -f /run/acer-backlight-cycle.pid ]] && { kill "$(cat /run/acer-backlight-cycle.pid)" 2>/dev/null; rm -f /run/acer-backlight-cycle.pid; }
 [[ $hex == 000000 ]] || master on
 for z in $ZONES; do paint "$z" "$r" "$g" "$b"; done
